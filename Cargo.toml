@@ -1,5 +1,5 @@
 [workspace]
-members = ["engine", "test-engine"]
+members = ["engine", "macros", "test-engine"]
 resolver = "2"
 
 [profile.dev]
