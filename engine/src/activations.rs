@@ -1,18 +1,22 @@
+use macros::{Name, SubTraits};
 use std::{f32::consts::E, fmt::Debug, marker::PhantomData};
 
-use serde::Serialize;
+use crate::{
+    nn::{Edge, NeuronSubTraits, OutputNeuron},
+    NeuronName,
+};
 
-use crate::nn::{Edge, OutputNeuron};
-
-#[derive(Debug, Serialize, Clone)]
-pub struct Sigmoid<Identifier: Debug + Clone + Serialize + 'static> {
+#[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
+pub struct Sigmoid<Identifier: Debug + Clone + Serialize + 'static + Send + Sync> {
     value: f32,
     marker: PhantomData<Identifier>,
 }
 
-impl<Identifier: Debug + Clone + Serialize + 'static> OutputNeuron for Sigmoid<Identifier> {
+impl<Identifier: Debug + Clone + Serialize + 'static + Send + Sync> OutputNeuron
+    for Sigmoid<Identifier>
+{
     fn step(&self, edge: &Edge, input: f32) -> f32 {
-        edge.0 * input
+        edge.weight * input
     }
 
     fn finish_and_save(&mut self, partial: f32) -> f32 {
@@ -22,7 +26,7 @@ impl<Identifier: Debug + Clone + Serialize + 'static> OutputNeuron for Sigmoid<I
     }
 }
 
-impl<Identifier: Debug + Clone + Serialize + 'static> Sigmoid<Identifier> {
+impl<Identifier: Debug + Clone + Serialize + 'static + Send + Sync> Sigmoid<Identifier> {
     pub fn new(value: f32) -> Box<dyn OutputNeuron> {
         Box::new(Sigmoid {
             value,

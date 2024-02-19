@@ -8,8 +8,11 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.77"
 dyn-clone = "1.0.16"
-erased-serde = "0.4.1"
 indexmap = "2.1.0"
 rand = "0.8.5"
-serde = { version = "1.0.193", features = ["derive"] }
 thiserror = "1.0.56"
+macros = { path = "../macros" }
+hashbrown = "0.14.3"
+log = "0.4.20"
+serde = { version = "1.0.196", features = ["derive"] }
+typetag = "0.2.15"
