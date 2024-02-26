@@ -2,6 +2,9 @@ pub mod activations;
 pub mod nn;
 pub mod sim;
 
-pub trait NeuronName {
-    fn name(&self) -> &'static str;
+pub use typetag;
+
+pub trait NeuronInfo {
+    fn _type(&self) -> &'static str;
+    fn id(&self) -> usize;
 }

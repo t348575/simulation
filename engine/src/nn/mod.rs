@@ -1,14 +1,14 @@
 use std::fmt::Debug;
 
 use dyn_clone::{clone_trait_object, DynClone};
-use serde::{Deserialize, Serialize};
 use indexmap::IndexMap;
 use log::debug;
 use macros::{Name, SubTraits};
 use rand::{random, Rng};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{nn::util::connection_pair_exists, NeuronName};
+use crate::{nn::util::connection_pair_exists, NeuronInfo};
 
 pub mod reproduce;
 pub mod util;
@@ -22,18 +22,27 @@ pub enum Node {
     Neuron(Box<dyn Neuron>),
 }
 
-impl NeuronName for Node {
-    fn name(&self) -> &'static str {
+impl NeuronInfo for Node {
+    fn _type(&self) -> &'static str {
         match self {
             Node::None => unreachable!(),
-            Node::Input(n) => n.name(),
-            Node::Output(n) => n.name(),
-            Node::Neuron(n) => n.name(),
+            Node::Input(n) => n._type(),
+            Node::Output(n) => n._type(),
+            Node::Neuron(n) => n._type(),
+        }
+    }
+
+    fn id(&self) -> usize {
+        match self {
+            Node::None => unreachable!(),
+            Node::Input(n) => n.id(),
+            Node::Output(n) => n.id(),
+            Node::Neuron(n) => n.id(),
         }
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone, Copy)]
 pub struct Edge {
     pub weight: f32,
     pub enabled: bool,
@@ -48,35 +57,36 @@ impl Edge {
     }
 }
 
-pub trait NeuronSubTraits:
-    Debug + DynClone + NeuronName + Sync + Send
-{
-}
+#[typetag::serde]
+pub trait NeuronSubTraits: Debug + DynClone + NeuronInfo + Sync + Send {}
 
 clone_trait_object!(InputNeuron);
+#[typetag::serde]
 pub trait InputNeuron: NeuronSubTraits {
     fn as_standard(&self) -> f32;
 }
 
 clone_trait_object!(OutputNeuron);
+#[typetag::serde]
 pub trait OutputNeuron: NeuronSubTraits {
     fn step(&self, edge: &Edge, input: f32) -> f32;
     fn finish_and_save(&mut self, partial: f32) -> f32;
 }
 
 clone_trait_object!(Neuron);
+#[typetag::serde]
 pub trait Neuron: NeuronSubTraits {
     fn step(&self, edge: &Edge, input: f32) -> f32;
     fn finish(&self, partial: f32) -> f32;
 }
 
 pub type GraphSize = u16;
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NeuralGraph {
     pub layers: Vec<Vec<GraphNode>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Eq, Hash, Copy)]
 pub struct GraphLocation {
     pub layer: GraphSize,
     pub node: GraphSize,
@@ -88,7 +98,7 @@ impl GraphLocation {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub struct GraphEdge {
     pub to: GraphLocation,
     pub value: Edge,
@@ -212,7 +222,7 @@ impl NeuralGraph {
     }
 
     pub fn add_layer(&mut self, idx: GraphSize) {
-        while self.layers.len() > idx as usize {
+        while idx as usize > self.layers.len() - 2 {
             self.layers.insert(idx as usize, Vec::new());
             for layer in self.layers.iter_mut() {
                 for node in layer.iter_mut() {
@@ -226,9 +236,9 @@ impl NeuralGraph {
         }
     }
 
-    pub fn add_node_at(&mut self, location: GraphLocation, value: Node) {
+    pub fn create_node_at(&mut self, location: &GraphLocation, value: Node) {
         self.add_layer(location.layer);
-        while self.layers[location.layer as usize].len() > location.node as usize {
+        while location.node as usize > self.layers[location.layer as usize].len() {
             self.layers[location.layer as usize].push(GraphNode::blank());
         }
         self.layers[location.layer as usize].insert(location.node as usize, GraphNode::new(value));
@@ -249,11 +259,32 @@ impl NeuralGraph {
 
         to_delete.drain(..).for_each(|loc| {
             self.layers[loc.layer as usize].remove(loc.node as usize);
+            self.layers.iter_mut().for_each(|layer| {
+                layer.iter_mut().for_each(|node| {
+                    let t = node
+                        .connections
+                        .drain(..)
+                        .filter_map(|mut c| {
+                            if c.to.layer == loc.layer && c.to.node > loc.node {
+                                if c.to.node == 0 {
+                                    None
+                                } else {
+                                    c.to.node -= 1;
+                                    Some(c)
+                                }
+                            } else {
+                                Some(c)
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    node.connections = t;
+                })
+            })
         });
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Net {
     pub graph: NeuralGraph,
     pub input_layer: GraphSize,
@@ -261,15 +292,19 @@ pub struct Net {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
-pub struct BasicNeuron(f32);
+pub struct BasicNeuron {
+    bias: f32,
+    id: usize,
+}
 
+#[typetag::serde]
 impl Neuron for BasicNeuron {
     fn step(&self, edge: &Edge, input: f32) -> f32 {
         edge.weight * input
     }
 
     fn finish(&self, partial: f32) -> f32 {
-        partial + self.0
+        partial + self.bias
     }
 }
 
@@ -301,6 +336,7 @@ impl Net {
 
         let mut num_internal_layers = rng.gen_range(0..5);
         let mut remove_layers = 0;
+        let mut id = 0;
         for _ in 0..num_internal_layers {
             let num_nodes = rng.gen_range(0..10);
             if num_nodes == 0 {
@@ -311,8 +347,9 @@ impl Net {
             for _ in 0..num_nodes {
                 g.add_node(
                     l,
-                    GraphNode::new(Node::Neuron(Box::new(BasicNeuron(random())))),
+                    GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: random(), id }))),
                 )?;
+                id += 1;
             }
         }
         num_internal_layers -= remove_layers;
@@ -478,13 +515,10 @@ impl Net {
 
             _types[idx].reproduce(&a, &b, &mut net)?;
 
-            println!("done");
-
             if done {
                 break;
             }
         }
-        println!("done reproduction");
         Ok(net)
     }
 }

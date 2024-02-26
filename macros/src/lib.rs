@@ -23,9 +23,13 @@ pub fn derive_neuron_name(input: TokenStream) -> TokenStream {
         .collect::<Vec<_>>();
     let generics = input.generics;
     quote! {
-        impl #generics NeuronName for #name<#(#generic_names, )*> {
-            fn name(&self) -> &'static str {
+        impl #generics NeuronInfo for #name<#(#generic_names, )*> {
+            fn _type(&self) -> &'static str {
                 #name_str
+            }
+
+            fn id(&self) -> usize {
+                self.id
             }
         }
     }
@@ -52,6 +56,7 @@ pub fn derive_neuron_sub_traits(input: TokenStream) -> TokenStream {
         .collect::<Vec<_>>();
     let generics = input.generics;
     quote! {
+        #[typetag::serde]
         impl #generics NeuronSubTraits for #name<#(#generic_names, )*> {}
     }
     .into()
