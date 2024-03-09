@@ -45,14 +45,8 @@ pub trait Generator {
 #[derive(Debug, Error)]
 pub enum GeneratorError {}
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Crossover;
-
-impl Crossover {
-    pub fn new() -> Crossover {
-        Crossover {}
-    }
-}
 
 #[derive(Debug)]
 struct NodeReplacement {
@@ -145,14 +139,8 @@ impl Reproducer for Crossover {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct DefaultIterator(usize);
-
-impl DefaultIterator {
-    pub fn new() -> DefaultIterator {
-        DefaultIterator(0)
-    }
-}
 
 impl Generator for DefaultIterator {
     fn generate(
@@ -163,5 +151,108 @@ impl Generator for DefaultIterator {
     ) -> Result<(usize, bool), GeneratorError> {
         self.0 += 1;
         Ok((self.0 - 1, self.0 >= _types.len()))
+    }
+}
+
+impl DefaultIterator {
+    pub fn new() -> DefaultIterator {
+        DefaultIterator(0)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        activations::Sigmoid,
+        nn::{
+            reproduce::{Crossover, Reproducer},
+            BasicNeuron, Edge, GraphLocation, GraphNode, Net, Node,
+        },
+    };
+
+    use crate::nn::test_requirements::*;
+
+    #[test]
+    #[rustfmt::skip]
+    fn basic_test() {
+        let input_nodes = [
+            Node::Input(Box::new(BlankInput::new(0.0, 0))),
+            Node::Input(Box::new(BlankInput::new(0.0, 1))),
+            Node::Input(Box::new(BlankInput::new(0.0, 2))),
+        ];
+
+        let output_nodes = [
+            Node::Output(Sigmoid::new(0.0, 3)),
+            Node::Output(Sigmoid::new(0.0, 4)),
+        ];
+
+        let mut graph_a = create_graph(&input_nodes, &output_nodes);
+
+        graph_a.add_layer(1);
+        graph_a.add_node(1,GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: 0.0, id: 5 }))),).unwrap();
+        graph_a.add_node(1,GraphNode::new(Node::Neuron(Box::new(TestNeuronA { value: 0.0, id: 6 }))),).unwrap();
+
+        graph_a.add_edge(GraphLocation::new(0, 0),GraphLocation::new(1, 0),Edge::default(),).unwrap();
+        graph_a.add_edge(GraphLocation::new(0, 1),GraphLocation::new(1, 0),Edge::default(),).unwrap();
+        graph_a.add_edge(GraphLocation::new(0, 2),GraphLocation::new(1, 0),Edge::default(),).unwrap();
+        graph_a.add_edge(GraphLocation::new(0, 2),GraphLocation::new(1, 1),Edge::default(),).unwrap();
+
+        graph_a.add_edge(GraphLocation::new(1, 0),GraphLocation::new(2, 0),Edge::default(),).unwrap();
+        graph_a.add_edge(GraphLocation::new(1, 0),GraphLocation::new(2, 1),Edge::default(),).unwrap();
+
+        graph_a.add_edge(GraphLocation::new(1, 1),GraphLocation::new(2, 1),Edge::default(),).unwrap();
+
+        let a = Net {
+            graph: graph_a,
+            input_layer: 0,
+            output_layer: 2,
+        };
+
+        let mut graph_b = create_graph(&input_nodes, &output_nodes);
+
+        graph_b.add_layer(1);
+        graph_b.add_node(1,GraphNode::new(Node::Neuron(Box::new(TestNeuronB { value: 0.0, id: 6 }))),).unwrap();
+        graph_b.add_node(1,GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: 0.0, id: 5 }))),).unwrap();
+
+        graph_b.add_edge(GraphLocation::new(0, 0),GraphLocation::new(1, 1),Edge::default(),).unwrap();
+        graph_b.add_edge(GraphLocation::new(0, 1),GraphLocation::new(1, 1),Edge::default(),).unwrap();
+        graph_b.add_edge(GraphLocation::new(0, 2),GraphLocation::new(1, 1),Edge::default(),).unwrap();
+        graph_b.add_edge(GraphLocation::new(0, 0),GraphLocation::new(1, 0),Edge::default(),).unwrap();
+
+        graph_b.add_edge(GraphLocation::new(1, 1),GraphLocation::new(2, 0),Edge::default(),).unwrap();
+        graph_b.add_edge(GraphLocation::new(1, 1),GraphLocation::new(2, 1),Edge::default(),).unwrap();
+        graph_b.add_edge(GraphLocation::new(1, 0),GraphLocation::new(2, 0),Edge::default(),).unwrap();
+        graph_b.add_edge(GraphLocation::new(1, 0),GraphLocation::new(2, 1),Edge::default(),).unwrap();
+
+        let b = Net {
+            graph: graph_b,
+            input_layer: 0,
+            output_layer: 2,
+        };
+
+        let mut output = Net::from_preserving_basic(&a).expect("Could not create neural net from A");
+        Crossover::default().reproduce(&a, &b, &mut output).expect("Could not crossover");
+
+        let mut compose_output = create_graph(&input_nodes, &output_nodes);
+
+        compose_output.add_layer(1);
+        compose_output.add_node(1, GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: 0.0, id: 5 })))).unwrap();
+
+        compose_output.add_edge(GraphLocation::new(0, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
+        compose_output.add_edge(GraphLocation::new(0, 1), GraphLocation::new(1, 0), Edge::default()).unwrap();
+        compose_output.add_edge(GraphLocation::new(0, 2), GraphLocation::new(1, 0), Edge::default()).unwrap();
+
+        compose_output.add_edge(GraphLocation::new(1, 0), GraphLocation::new(2, 0), Edge::default()).unwrap();
+        compose_output.add_edge(GraphLocation::new(1, 0), GraphLocation::new(2, 1), Edge::default()).unwrap();
+
+        // let sim= Simulation {
+        //     nets: vec![Nn { net: output.clone(), node_positions: vec![] }],
+        //     input_nodes: input_nodes.to_vec(),
+        //     output_nodes: output_nodes.to_vec(),
+        // };
+
+        // std::fs::write("reproduce.bin", bincode::serialize(&sim).unwrap()).unwrap();
+
+        assert_eq!(bincode::serialize(&compose_output).unwrap(), bincode::serialize(&output.graph).unwrap());
     }
 }

@@ -1,15 +1,19 @@
 use std::fmt::Debug;
 
 use dyn_clone::{clone_trait_object, DynClone};
+use hashbrown::HashSet;
 use indexmap::IndexMap;
 use log::debug;
 use macros::{Name, SubTraits};
-use rand::{random, Rng};
+use rand::{random, seq::IteratorRandom, Rng};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{nn::util::connection_pair_exists, NeuronInfo};
 
+use self::mutate::MutationSelector;
+
+pub mod mutate;
 pub mod reproduce;
 pub mod util;
 
@@ -194,6 +198,17 @@ impl NeuralGraph {
             .find(|x| x.to.eq(to))
     }
 
+    pub fn get_edge_mut(
+        &mut self,
+        from: &GraphLocation,
+        to: &GraphLocation,
+    ) -> Option<&mut GraphEdge> {
+        self.layers[from.layer as usize][from.node as usize]
+            .connections
+            .iter_mut()
+            .find(|x| x.to.eq(to))
+    }
+
     pub fn add_edge(
         &mut self,
         from: GraphLocation,
@@ -221,8 +236,27 @@ impl NeuralGraph {
         Ok(())
     }
 
+    pub fn remove_edge(&mut self, from: &GraphLocation, to: &GraphLocation) -> bool {
+        let node = &mut self.layers[from.layer as usize][from.node as usize];
+        let before = node.connections.len();
+        node.connections.retain(|x| !x.to.eq(to));
+        node.connections.len() == before
+    }
+
+    pub fn removed_node(&mut self, remove: GraphLocation) {
+        self.layers[remove.layer as usize].remove(remove.node as usize);
+
+        self.layers.iter_mut().for_each(|layer| {
+            layer.iter_mut().for_each(|node| {
+                node.connections.retain(|c| c.to.ne(&remove))
+            })
+        })
+    }
+
     pub fn add_layer(&mut self, idx: GraphSize) {
-        while idx as usize > self.layers.len() - 2 {
+        let mut first = true;
+        while idx as usize > self.layers.len() - 2 || first {
+            first = false;
             self.layers.insert(idx as usize, Vec::new());
             for layer in self.layers.iter_mut() {
                 for node in layer.iter_mut() {
@@ -234,6 +268,11 @@ impl NeuralGraph {
                 }
             }
         }
+    }
+
+    pub fn push_node_at(&mut self, layer: GraphSize, value: Node) -> GraphLocation {
+        self.layers[layer as usize].push(GraphNode::new(value));
+        GraphLocation::new(layer, (self.layers[layer as usize].len() - 1) as GraphSize)
     }
 
     pub fn create_node_at(&mut self, location: &GraphLocation, value: Node) {
@@ -282,6 +321,86 @@ impl NeuralGraph {
             })
         });
     }
+
+    fn random_from(
+        &self,
+        from: GraphSize,
+        subtract_from_end: Option<usize>,
+    ) -> Option<GraphLocation> {
+        if self.layers.len() == 0 {
+            return None;
+        }
+
+        let subtract_from_end = subtract_from_end.unwrap_or_default();
+        let mut rng = rand::thread_rng();
+        let layer_idx = rng.gen_range(from as usize..self.layers.len() - subtract_from_end);
+        let layer = &self.layers[layer_idx];
+
+        if layer.len() == 0 {
+            return None;
+        }
+        Some(GraphLocation::new(
+            layer_idx as GraphSize,
+            rng.gen_range(0..layer.len() - subtract_from_end) as GraphSize,
+        ))
+    }
+
+    pub fn random_input_or_hidden(&self) -> Option<GraphLocation> {
+        self.random_from(0, Some(0))
+    }
+
+    pub fn random_output_or_hidden(
+        &self,
+        greater_than: Option<GraphSize>,
+    ) -> Option<GraphLocation> {
+        self.random_from(greater_than.unwrap_or_default() + 1, None)
+    }
+
+    pub fn random_hidden(&self) -> Option<GraphLocation> {
+        self.random_from(1, Some(1))
+    }
+
+    pub fn random_edge_mut(&mut self) -> Option<(GraphLocation, &mut GraphEdge)> {
+        self.layers
+            .iter_mut()
+            .enumerate()
+            .flat_map(|l| {
+                l.1.iter_mut()
+                    .enumerate()
+                    .flat_map(|n| n.1.connections.iter_mut().map(move |e| (n.0, e)))
+                    .map(move |(node_pos, e)| {
+                        (
+                            GraphLocation::new(l.0 as GraphSize, node_pos as GraphSize),
+                            e,
+                        )
+                    })
+            })
+            .choose_stable(&mut rand::thread_rng())
+    }
+
+    pub fn has_cycle(&self, start_from: Option<GraphLocation>) -> bool {
+        if self.layers.len() == 0 {
+            return false;
+        }
+
+        let start = start_from.unwrap_or(GraphLocation::default());
+
+        let mut visited = HashSet::new();
+        let mut stack = Vec::new();
+        stack.push(start);
+
+        while let Some(loc) = stack.pop() {
+            if visited.contains(&loc) {
+                return true;
+            }
+            visited.insert(loc);
+
+            for node in &self.layers[loc.layer as usize][loc.node as usize].connections {
+                stack.push(node.to.clone());
+            }
+        }
+        false
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -291,7 +410,7 @@ pub struct Net {
     pub output_layer: GraphSize,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Name, SubTraits)]
 pub struct BasicNeuron {
     bias: f32,
     id: usize,
@@ -520,5 +639,171 @@ impl Net {
             }
         }
         Ok(net)
+    }
+
+    pub fn mutate(
+        &mut self,
+        link_mutators: &[Box<dyn mutate::LinkMutator>],
+        neuron_mutators: &[Box<dyn mutate::NeuronMutator>],
+        neurons: &[Box<dyn Neuron>],
+        neuron_selector: &MutationSelector,
+        mut generator: impl mutate::Generator,
+    ) -> Result<(), mutate::MutateError> {
+        loop {
+            let (is_link, idx, done) =
+                generator.generate(&self.graph, link_mutators, &neuron_mutators)?;
+
+            if is_link {
+                link_mutators[idx].mutate(self)?;
+            } else {
+                neuron_mutators[idx].mutate(self, neurons, neuron_selector)?;
+            }
+
+            if done {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test_requirements {
+    use macros::{Name, SubTraits};
+    use serde::{Deserialize, Serialize};
+
+    use super::{GraphLocation, GraphNode, Net, NeuralGraph, NeuronInfo, NeuronSubTraits, Node};
+
+    #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
+    pub struct BlankInput {
+        pub value: f32,
+        pub id: usize,
+    }
+
+    #[typetag::serde]
+    impl super::InputNeuron for BlankInput {
+        fn as_standard(&self) -> f32 {
+            self.value
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
+    pub struct TestNeuronA {
+        pub value: f32,
+        pub id: usize,
+    }
+
+    #[typetag::serde]
+    impl super::Neuron for TestNeuronA {
+        fn step(&self, edge: &super::Edge, input: f32) -> f32 {
+            edge.weight * input
+        }
+
+        fn finish(&self, partial: f32) -> f32 {
+            partial + self.value
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
+    pub struct TestNeuronB {
+        pub value: f32,
+        pub id: usize,
+    }
+
+    #[typetag::serde]
+    impl super::Neuron for TestNeuronB {
+        fn step(&self, edge: &super::Edge, input: f32) -> f32 {
+            edge.weight * input
+        }
+
+        fn finish(&self, partial: f32) -> f32 {
+            partial + self.value
+        }
+    }
+
+    impl BlankInput {
+        pub fn new(value: f32, id: usize) -> Self {
+            BlankInput { value, id }
+        }
+    }
+
+    #[derive(Debug, Default, Serialize, Deserialize)]
+    pub struct NodePosition {
+        pub x: f32,
+        pub y: f32,
+    }
+
+    #[derive(Debug, Default, Serialize, Deserialize)]
+    pub struct Nn {
+        pub net: Net,
+        pub node_positions: Vec<(GraphLocation, NodePosition)>,
+    }
+
+    #[derive(Debug, Default, Serialize, Deserialize)]
+    pub struct Simulation {
+        pub nets: Vec<Nn>,
+        pub input_nodes: Vec<Node>,
+        pub output_nodes: Vec<Node>,
+    }
+
+    pub fn create_graph(inputs: &[Node], outputs: &[Node]) -> NeuralGraph {
+        let mut g = NeuralGraph::new();
+        g.add_layer_to_end();
+        for item in inputs.to_vec() {
+            g.add_node(0, GraphNode::new(item)).unwrap();
+        }
+
+        g.add_layer_to_end();
+        for item in outputs.to_vec() {
+            g.add_node(1, GraphNode::new(item)).unwrap();
+        }
+        g
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{activations::Sigmoid, nn::Edge};
+
+    use super::{test_requirements::*, GraphLocation, GraphNode, Node};
+
+    #[test]
+    #[rustfmt::skip]
+    fn has_cycle() {
+        let input_nodes = [
+            Node::Input(Box::new(BlankInput::new(0.0, 0))),
+            Node::Input(Box::new(BlankInput::new(0.0, 1))),
+            Node::Input(Box::new(BlankInput::new(0.0, 2))),
+        ];
+
+        let output_nodes = [
+            Node::Output(Sigmoid::new(0.0, 3)),
+            Node::Output(Sigmoid::new(0.0, 4)),
+        ];
+
+        let mut g = create_graph(&input_nodes, &output_nodes);
+        g.add_layer(1);
+        g.add_node(1, GraphNode::blank()).unwrap();
+        g.add_node(1, GraphNode::blank()).unwrap();
+
+        g.add_layer(2);
+        g.add_node(2, GraphNode::blank()).unwrap();
+        g.add_node(2, GraphNode::blank()).unwrap();
+
+        g.add_edge(GraphLocation::new(0, 1), GraphLocation::new(1, 0), Edge::default()).unwrap();
+        g.add_edge(GraphLocation::new(0, 2), GraphLocation::new(1, 1), Edge::default()).unwrap();
+        g.add_edge(GraphLocation::new(1, 0), GraphLocation::new(2, 1), Edge::default()).unwrap();
+        g.add_edge(GraphLocation::new(1, 1), GraphLocation::new(2, 0), Edge::default()).unwrap();
+        g.add_edge(GraphLocation::new(1, 1), GraphLocation::new(2, 1), Edge::default()).unwrap();
+        g.add_edge(GraphLocation::new(2, 0), GraphLocation::new(3, 0), Edge::default()).unwrap();
+        g.add_edge(GraphLocation::new(2, 1), GraphLocation::new(3, 0), Edge::default()).unwrap();
+
+        // should not be a cycle since 0,0 is not connected to anything
+        assert!(!g.has_cycle(None));
+        assert!(!g.has_cycle(Some(GraphLocation::new(0, 1))));
+
+        g.add_edge(GraphLocation::new(3, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
+
+        assert!(g.has_cycle(Some(GraphLocation::new(0, 1))));
     }
 }
