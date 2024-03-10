@@ -1,4 +1,7 @@
-use bevy::{prelude::*, window::{PrimaryWindow, WindowClosed}};
+use bevy::{
+    prelude::*,
+    window::{PrimaryWindow, WindowClosed},
+};
 use bevy_egui::{egui, EguiContext};
 
 use crate::{InspectWindowState, TabState};
@@ -31,7 +34,7 @@ pub fn main_menu(
                 if button.clicked() {
                     next_inspector_state.set(match inspector_state.get() {
                         InspectWindowState::Display => InspectWindowState::None,
-                        InspectWindowState::None => InspectWindowState::Display
+                        InspectWindowState::None => InspectWindowState::Display,
                     });
                 }
             });
@@ -39,9 +42,11 @@ pub fn main_menu(
         .unwrap();
 }
 
-
-pub fn inspector_exit(mut events: EventReader<WindowClosed>, mut next_inspector_state: ResMut<NextState<InspectWindowState>>) {
-    for event in events.read() {
+pub fn inspector_exit(
+    mut events: EventReader<WindowClosed>,
+    mut next_inspector_state: ResMut<NextState<InspectWindowState>>,
+) {
+    for _ in events.read() {
         next_inspector_state.set(InspectWindowState::None);
         return;
     }

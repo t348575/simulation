@@ -11,7 +11,7 @@ use crate::{
 pub struct Sigmoid {
     value: f32,
     id: usize,
-    _type: String
+    _type: String,
 }
 
 #[typetag::serde]

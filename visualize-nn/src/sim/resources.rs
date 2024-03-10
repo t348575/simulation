@@ -11,7 +11,7 @@ pub struct Simulation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Creature {
     pub brain: Net,
-    pub position: (f32, f32)
+    pub position: (f32, f32),
 }
 
 #[derive(Resource, Debug)]
@@ -19,7 +19,7 @@ pub struct ControlPanel {
     pub initial_num_creatures: String,
     pub width: String,
     pub height: String,
-    pub can_create_sim: bool
+    pub can_create_sim: bool,
 }
 
 impl Default for ControlPanel {
@@ -28,7 +28,7 @@ impl Default for ControlPanel {
             initial_num_creatures: "50".to_owned(),
             width: "0".to_owned(),
             height: "0".to_owned(),
-            can_create_sim: true
+            can_create_sim: true,
         }
     }
 }
@@ -38,5 +38,5 @@ pub enum SimulationState {
     #[default]
     None,
     Paused,
-    Running
+    Running,
 }

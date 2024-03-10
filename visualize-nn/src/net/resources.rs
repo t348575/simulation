@@ -2,11 +2,21 @@ use std::path::PathBuf;
 
 use bevy::prelude::*;
 use egui_file::FileDialog;
-use engine::nn::{GraphLocation, GraphNode, Net, Node};
+use engine::nn::{GraphLocation, GraphNode, Net};
 use serde::{Deserialize, Serialize};
 
 #[derive(Resource, Debug)]
 pub struct InspectorWindowId(pub Entity);
+
+#[derive(Event)]
+pub struct InspectNet(pub Net);
+
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum InspectNodeState {
+    #[default]
+    None,
+    Display,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct NodePosition {

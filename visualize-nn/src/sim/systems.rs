@@ -4,16 +4,19 @@ use bevy_egui::{
     EguiContext,
 };
 use bevy_vector_shapes::prelude::*;
-use rand::Rng;
 use engine::nn::{Net, Node};
+use rand::Rng;
 
-use crate::{BaseNodes, TabState};
+use crate::{net::resources::InspectNet, BaseNodes, TabState};
 
 use super::resources::*;
 
 const CREATURE_DIM: f32 = 5.0;
 
-pub fn setup(mut control_panel: ResMut<ControlPanel>, window_query: Query<&Window, With<PrimaryWindow>>) {
+pub fn setup(
+    mut control_panel: ResMut<ControlPanel>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+) {
     let window = window_query.get_single().unwrap();
     control_panel.width = window.width().to_string();
     control_panel.height = window.height().to_string();
@@ -28,7 +31,7 @@ pub fn control_panel(
     mut next_sim_state: ResMut<NextState<SimulationState>>,
     sim_state: Res<State<SimulationState>>,
     mut commands: Commands,
-    rects: Query<Entity, With<RectangleComponent>>
+    rects: Query<Entity, With<RectangleComponent>>,
 ) {
     egui::SidePanel::right("Control panel").show(egui_ctx.single_mut().get_mut(), |ui| {
         ui.horizontal(|ui| {
@@ -68,10 +71,7 @@ pub fn control_panel(
                 SimulationState::Running => "Pause simulation",
             };
 
-            let button = ui.add_sized(
-                (ui.available_width(), 0.0),
-                egui::Button::new(button_txt),
-            );
+            let button = ui.add_sized((ui.available_width(), 0.0), egui::Button::new(button_txt));
 
             if button.clicked() {
                 match sim_state.get() {
@@ -82,7 +82,7 @@ pub fn control_panel(
         });
 
         match sim_state.get() {
-            SimulationState::None => {},
+            SimulationState::None => {}
             _ => {
                 let button = ui.add_sized(
                     (ui.available_width(), 0.0),
@@ -96,7 +96,7 @@ pub fn control_panel(
                     next_sim_state.set(SimulationState::Paused);
                     next_sim_state.set(SimulationState::None);
                 }
-            },
+            }
         }
 
         ui.with_layout(Layout::bottom_up(egui::Align::Center), |ui| {
@@ -108,24 +108,30 @@ pub fn control_panel(
     });
 }
 
-fn generate_simulation(control_panel: &ControlPanel, base_nodes: &BaseNodes, data: &mut Simulation) {
+fn generate_simulation(
+    control_panel: &ControlPanel,
+    base_nodes: &BaseNodes,
+    data: &mut Simulation,
+) {
     let num_creatures: usize = control_panel.initial_num_creatures.parse().unwrap();
 
     let mut rng = rand::thread_rng();
     let height = control_panel.height.parse::<f32>().unwrap() / 2.0;
     let width = control_panel.width.parse::<f32>().unwrap() / 2.0;
 
-    let creatures = (0..num_creatures).map(|_| Creature {
-        brain: Net::gen(&base_nodes.input_nodes, &base_nodes.output_nodes).unwrap(),
-        position: (rng.gen_range((-1.0 * width)..width), rng.gen_range((-1.0 * height)..height)),
-    }).collect();
+    let creatures = (0..num_creatures)
+        .map(|_| Creature {
+            brain: Net::gen(&base_nodes.input_nodes, &base_nodes.output_nodes).unwrap(),
+            position: (
+                rng.gen_range((-1.0 * width)..width),
+                rng.gen_range((-1.0 * height)..height),
+            ),
+        })
+        .collect();
 
     data.world_dim = (width, height);
     data.creatures = creatures;
 }
-
-#[derive(Component)]
-struct Target;
 
 pub fn initialize_world(mut shapes: ShapeCommands, data: Res<Simulation>) {
     data.creatures.iter().for_each(|creature| {
@@ -141,11 +147,19 @@ fn clear_screen(commands: &mut Commands, rects: Query<Entity, With<RectangleComp
     }
 }
 
-pub fn run_simulation(mut data: ResMut<Simulation>, mut shapes: ShapeCommands, mut commands: Commands, rects: Query<Entity, With<RectangleComponent>>, time: Res<Time>) {
+pub fn run_simulation(
+    mut data: ResMut<Simulation>,
+    mut shapes: ShapeCommands,
+    mut commands: Commands,
+    rects: Query<Entity, With<RectangleComponent>>,
+    time: Res<Time>,
+) {
     clear_screen(&mut commands, rects);
 
     data.creatures.iter_mut().for_each(|c| {
-        let speed = c.brain.graph.layers[c.brain.graph.layers.len() - 1][4].value.clone();
+        let speed = c.brain.graph.layers[c.brain.graph.layers.len() - 1][4]
+            .value
+            .clone();
         let inputs = &mut c.brain.graph.layers[c.brain.input_layer as usize];
         if let Node::Input(i) = &mut inputs[0].value {
             i.set_value(i.as_standard() + 0.01); // hunger
@@ -179,13 +193,11 @@ pub fn run_simulation(mut data: ResMut<Simulation>, mut shapes: ShapeCommands, m
         let t = movement_vec * speed * time.delta_seconds();
         c.position.0 += t.x;
         c.position.1 += t.y;
-        
+
         shapes.color = Color::hex("1b1b1b").unwrap();
         shapes.transform.translation = Vec3::new(c.position.0, c.position.1, 0.0);
         shapes.rect(Vec2::new(CREATURE_DIM, CREATURE_DIM));
     });
-
-    // next_sim_state.set(SimulationState::Paused);
 }
 
 fn get_output_value(value: &Node) -> f32 {
@@ -202,10 +214,29 @@ fn dirs_to_vec(forward: f32, backward: f32, left: f32, right: f32) -> Vec2 {
     x + y
 }
 
-pub fn inspect_creature(buttons: Res<ButtonInput<MouseButton>>, q_windows: Query<&Window, With<PrimaryWindow>>) {
+fn convert_bottom_left_to_center_coords(pos: Vec2, dims: (f32, f32)) -> Vec2 {
+    let half_width = dims.0 / 2.0;
+    let half_height = dims.1 / 2.0;
+    Vec2::new(pos.x - half_width, half_height - pos.y)
+}
+
+pub fn inspect_creature(
+    buttons: Res<ButtonInput<MouseButton>>,
+    q_windows: Query<&Window, With<PrimaryWindow>>,
+    data: Res<Simulation>,
+    mut inspect_net: EventWriter<InspectNet>,
+) {
     if buttons.just_pressed(MouseButton::Left) {
-        if let Some(position) = q_windows.single().cursor_position() {
-            println!("({}, {})", position.x, position.y);
+        let window = q_windows.single();
+        if let Some(position) = window.cursor_position() {
+            let position =
+                convert_bottom_left_to_center_coords(position, (window.width(), window.height()));
+            if let Some(c) = data.creatures.iter().find(|c| {
+                (c.position.0 + 5.0 >= position.x && c.position.0 - 5.0 <= position.x)
+                    && (c.position.1 + 5.0 >= position.y && c.position.1 - 5.0 <= position.y)
+            }) {
+                inspect_net.send(InspectNet(c.brain.clone()));
+            }
         }
     }
 }

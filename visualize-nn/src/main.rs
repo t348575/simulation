@@ -1,9 +1,13 @@
-use bevy::{prelude::*, render::{camera::RenderTarget, view::RenderLayers}, window::{PrimaryWindow, WindowMode, WindowRef}};
+use bevy::{
+    prelude::*,
+    render::camera::RenderTarget,
+    window::{WindowMode, WindowRef},
+};
 use bevy_egui::EguiPlugin;
 use engine::{activations::Sigmoid, nn::Node};
 use inputs::*;
 use main_menu::MainMenuPlugin;
-use net::NeuralNetPlugin;
+use net::{resources::InspectNet, NeuralNetPlugin};
 use sim::SimulationPlugin;
 
 pub mod inputs;
@@ -57,14 +61,15 @@ fn main() {
     let output_nodes = vec![
         Node::Output(Sigmoid::new(0.0, 4, "forward".to_string())), // ::<Forward>
         Node::Output(Sigmoid::new(0.0, 5, "backward".to_string())), // ::<Backward>
-        Node::Output(Sigmoid::new(0.0, 6, "left".to_string())), // ::<Left>
-        Node::Output(Sigmoid::new(0.0, 7, "right".to_string())), // ::<Right>
+        Node::Output(Sigmoid::new(0.0, 6, "left".to_string())),    // ::<Left>
+        Node::Output(Sigmoid::new(0.0, 7, "right".to_string())),   // ::<Right>
         Node::Output(Sigmoid::new(0.0, 8, "output_speed".to_string())), // ::<OutputSpeed>
     ];
 
     App::new()
         .init_state::<TabState>()
         .init_state::<InspectWindowState>()
+        .add_event::<InspectNet>()
         .insert_resource(BaseNodes {
             input_nodes,
             output_nodes,
