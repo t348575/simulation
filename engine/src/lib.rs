@@ -1,6 +1,6 @@
 pub mod activations;
 pub mod nn;
-pub mod sim;
+// pub mod sim;
 
 pub use typetag;
 

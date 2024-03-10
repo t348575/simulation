@@ -160,8 +160,8 @@ impl NeuronMutator for RemoveNeuron {
     fn mutate(
         &self,
         net: &mut Net,
-        neurons: &[Box<dyn Neuron>],
-        selector: &MutationSelector,
+        _: &[Box<dyn Neuron>],
+        _: &MutationSelector,
     ) -> Result<bool, MutateError> {
         if net.graph.layers.len() == 2 {
             return Ok(false);
@@ -171,7 +171,7 @@ impl NeuronMutator for RemoveNeuron {
             Some(n) => {
                 net.graph.removed_node(n);
                 Ok(true)
-            },
+            }
             None => Ok(false),
         }
     }

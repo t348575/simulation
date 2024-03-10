@@ -5,6 +5,9 @@ use egui_file::FileDialog;
 use engine::nn::{GraphLocation, GraphNode, Net, Node};
 use serde::{Deserialize, Serialize};
 
+#[derive(Resource, Debug)]
+pub struct InspectorWindowId(pub Entity);
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct NodePosition {
     pub x: f32,
@@ -17,13 +20,6 @@ pub struct Nn {
     pub node_positions: Vec<(GraphLocation, NodePosition)>,
 }
 
-#[derive(Resource, Debug, Default, Serialize, Deserialize)]
-pub struct Simulation {
-    pub nets: Vec<Nn>,
-    pub input_nodes: Vec<Node>,
-    pub output_nodes: Vec<Node>,
-}
-
 #[derive(Resource, Debug, Default)]
 pub struct WindowInfo {
     pub inspect_window_pos: (f32, f32),
@@ -31,13 +27,6 @@ pub struct WindowInfo {
 
 #[derive(Resource, Debug, Default)]
 pub struct InspectInfo(pub (GraphLocation, GraphNode));
-
-#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum InspectWindowState {
-    #[default]
-    None,
-    Display,
-}
 
 #[derive(Resource, Debug)]
 pub struct ControlPanel {

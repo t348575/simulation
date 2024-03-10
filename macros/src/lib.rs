@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, GenericParam};
 
-#[proc_macro_derive(Name)]
-pub fn derive_neuron_name(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(DNeuronInfo)]
+pub fn derive_neuron_info(input: TokenStream) -> TokenStream {
     let input: DeriveInput = parse_macro_input!(input);
     let name_str = input.ident.to_string();
     let name = input.ident;

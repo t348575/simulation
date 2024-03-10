@@ -4,7 +4,7 @@ use dyn_clone::{clone_trait_object, DynClone};
 use hashbrown::HashSet;
 use indexmap::IndexMap;
 use log::debug;
-use macros::{Name, SubTraits};
+use macros::{DNeuronInfo, SubTraits};
 use rand::{random, seq::IteratorRandom, Rng};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -68,6 +68,7 @@ clone_trait_object!(InputNeuron);
 #[typetag::serde]
 pub trait InputNeuron: NeuronSubTraits {
     fn as_standard(&self) -> f32;
+    fn set_value(&mut self, value: f32);
 }
 
 clone_trait_object!(OutputNeuron);
@@ -75,6 +76,7 @@ clone_trait_object!(OutputNeuron);
 pub trait OutputNeuron: NeuronSubTraits {
     fn step(&self, edge: &Edge, input: f32) -> f32;
     fn finish_and_save(&mut self, partial: f32) -> f32;
+    fn value(&self) -> f32;
 }
 
 clone_trait_object!(Neuron);
@@ -247,9 +249,9 @@ impl NeuralGraph {
         self.layers[remove.layer as usize].remove(remove.node as usize);
 
         self.layers.iter_mut().for_each(|layer| {
-            layer.iter_mut().for_each(|node| {
-                node.connections.retain(|c| c.to.ne(&remove))
-            })
+            layer
+                .iter_mut()
+                .for_each(|node| node.connections.retain(|c| c.to.ne(&remove)))
         })
     }
 
@@ -410,7 +412,7 @@ pub struct Net {
     pub output_layer: GraphSize,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Name, SubTraits)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
 pub struct BasicNeuron {
     bias: f32,
     id: usize,
@@ -669,12 +671,12 @@ impl Net {
 
 #[cfg(test)]
 mod test_requirements {
-    use macros::{Name, SubTraits};
+    use macros::{DNeuronInfo, SubTraits};
     use serde::{Deserialize, Serialize};
 
     use super::{GraphLocation, GraphNode, Net, NeuralGraph, NeuronInfo, NeuronSubTraits, Node};
 
-    #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
+    #[derive(Debug, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
     pub struct BlankInput {
         pub value: f32,
         pub id: usize,
@@ -687,7 +689,7 @@ mod test_requirements {
         }
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
+    #[derive(Debug, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
     pub struct TestNeuronA {
         pub value: f32,
         pub id: usize,
@@ -704,7 +706,7 @@ mod test_requirements {
         }
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
+    #[derive(Debug, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
     pub struct TestNeuronB {
         pub value: f32,
         pub id: usize,
@@ -777,8 +779,8 @@ mod test {
         ];
 
         let output_nodes = [
-            Node::Output(Sigmoid::new(0.0, 3)),
-            Node::Output(Sigmoid::new(0.0, 4)),
+            Node::Output(Sigmoid::new(0.0, 3, "a".to_owned())),
+            Node::Output(Sigmoid::new(0.0, 4, "b".to_owned())),
         ];
 
         let mut g = create_graph(&input_nodes, &output_nodes);

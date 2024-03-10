@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
 pub struct Hunger {
     value: f32,
-    id: usize
+    id: usize,
 }
 
 #[typetag::serde]
@@ -20,10 +20,7 @@ impl InputNeuron for Hunger {
 
 impl Hunger {
     pub fn new(value: f32, id: usize) -> Box<dyn InputNeuron> {
-        Box::new(Self {
-            value,
-            id
-        })
+        Box::new(Self { value, id })
     }
 }
 
@@ -42,17 +39,14 @@ impl InputNeuron for Age {
 
 impl Age {
     pub fn new(value: u32, id: usize) -> Box<dyn InputNeuron> {
-        Box::new(Self {
-            value,
-            id
-        })
+        Box::new(Self { value, id })
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
 pub struct Health {
     value: f32,
-    id: usize
+    id: usize,
 }
 
 #[typetag::serde]
@@ -64,17 +58,14 @@ impl InputNeuron for Health {
 
 impl Health {
     pub fn new(value: f32, id: usize) -> Box<dyn InputNeuron> {
-        Box::new(Self {
-            value,
-            id
-        })
+        Box::new(Self { value, id })
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Name, SubTraits)]
 pub struct Speed {
     value: f32,
-    id: usize
+    id: usize,
 }
 
 #[typetag::serde]
@@ -86,9 +77,6 @@ impl InputNeuron for Speed {
 
 impl Speed {
     pub fn new(value: f32, id: usize) -> Box<dyn InputNeuron> {
-        Box::new(Self {
-            value,
-            id
-        })
+        Box::new(Self { value, id })
     }
 }

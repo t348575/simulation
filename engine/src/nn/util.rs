@@ -196,4 +196,3 @@ pub fn connection_pair_exists(
         .position(|x| (x.0 == *from && x.1 == *to) || (x.0 == *to && x.1 == *from))
         .map_or_else(|| false, |_| true)
 }
-
