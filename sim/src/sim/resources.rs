@@ -1,17 +1,25 @@
+use std::thread::JoinHandle;
+
 use bevy::ecs::{schedule::States, system::Resource};
-use engine::nn::Net;
+use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
+
+use super::sim::{BasicCreature, RunnerReq, RunnerRes};
+
+#[derive(Resource)]
+pub struct RunnerResource {
+    pub tx: Sender<RunnerReq>,
+    pub rx: Receiver<RunnerRes>,
+    pub thread: JoinHandle<()>,
+}
 
 #[derive(Resource, Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Simulation {
     pub world_dim: (f32, f32),
-    pub creatures: Vec<Creature>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Creature {
-    pub brain: Net,
-    pub position: (f32, f32),
+    pub window_dims: (f32, f32),
+    pub creatures: Vec<BasicCreature>,
+    pub food: Vec<(f32, f32)>,
+    pub ticks: usize,
 }
 
 #[derive(Resource, Debug)]
@@ -25,7 +33,7 @@ pub struct ControlPanel {
 impl Default for ControlPanel {
     fn default() -> Self {
         Self {
-            initial_num_creatures: "50".to_owned(),
+            initial_num_creatures: "500".to_owned(),
             width: "0".to_owned(),
             height: "0".to_owned(),
             can_create_sim: true,

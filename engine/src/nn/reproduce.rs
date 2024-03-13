@@ -182,8 +182,8 @@ mod test {
         ];
 
         let output_nodes = [
-            Node::Output(Sigmoid::new(0.0, 3)),
-            Node::Output(Sigmoid::new(0.0, 4)),
+            Node::Output(Sigmoid::new(0.0, 3, "a".to_owned())),
+            Node::Output(Sigmoid::new(0.0, 4, "b".to_owned())),
         ];
 
         let mut graph_a = create_graph(&input_nodes, &output_nodes);

@@ -69,6 +69,7 @@ pub fn get_inspect_net(
         );
 
         commands.insert_resource(nn);
+        break;
     }
 }
 

@@ -1,7 +1,7 @@
 use bevy::{
     prelude::*,
     render::camera::RenderTarget,
-    window::{WindowMode, WindowRef},
+    window::{PresentMode, WindowMode, WindowRef},
 };
 use bevy_egui::EguiPlugin;
 use engine::{activations::Sigmoid, nn::Node};
@@ -40,6 +40,7 @@ fn main() {
     let mut window_plugin = WindowPlugin {
         primary_window: Some(Window {
             title: "Visualize NN".into(),
+            present_mode: PresentMode::AutoVsync,
             mode: WindowMode::Windowed,
             ..default()
         }),
@@ -64,6 +65,8 @@ fn main() {
         Node::Output(Sigmoid::new(0.0, 6, "left".to_string())),    // ::<Left>
         Node::Output(Sigmoid::new(0.0, 7, "right".to_string())),   // ::<Right>
         Node::Output(Sigmoid::new(0.0, 8, "output_speed".to_string())), // ::<OutputSpeed>
+        Node::Output(Sigmoid::new(0.0, 9, "mate".to_string())),    // ::<Mate>
+        Node::Output(Sigmoid::new(0.0, 10, "eat".to_string())),    // ::<Eat>
     ];
 
     App::new()

@@ -6,6 +6,7 @@ use crate::{InspectWindowState, TabState};
 use self::{resources::*, systems::*};
 
 mod resources;
+mod sim;
 mod systems;
 
 pub struct SimulationPlugin;
@@ -16,6 +17,7 @@ impl Plugin for SimulationPlugin {
             .init_resource::<Simulation>()
             .init_state::<SimulationState>()
             .add_plugins(Shape2dPlugin::default())
+            .add_systems(Startup, init_runner)
             .add_systems(OnEnter(TabState::Simulation), setup)
             .add_systems(Update, control_panel.run_if(in_state(TabState::Simulation)))
             .add_systems(

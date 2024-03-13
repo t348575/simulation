@@ -687,6 +687,10 @@ mod test_requirements {
         fn as_standard(&self) -> f32 {
             self.value
         }
+
+        fn set_value(&mut self, value: f32) {
+            self.value = value;
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
