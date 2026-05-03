@@ -187,7 +187,7 @@ mod test {
         },
     };
 
-    use super::AddNeuron;
+    use super::{AddNeuron, LinkMutator, NeuronMutator, RemoveEdge, RemoveNeuron};
 
     #[test]
     #[rustfmt::skip]
@@ -253,8 +253,69 @@ mod test {
         //     output_nodes: output_nodes.to_vec(),
         // };
 
-        // std::fs::write("mutate.bin", bincode::serialize(&sim).unwrap()).unwrap();
+        // std::fs::write("mutate.bin", wincode::serialize(&sim).unwrap()).unwrap();
 
         assert_eq!(bincode::serialize(&m.graph).unwrap(), bincode::serialize(&v.graph).unwrap());
     }
+
+    #[test]
+    fn remove_edge_returns_false_when_no_edges_exist() {
+        // random_edge_mut returns None on an edge-less graph → mutate returns Ok(false)
+        let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
+        let g = create_graph(&input_nodes, &output_nodes);
+        let mut net = Net { graph: g, input_layer: 0, output_layer: 1 };
+
+        let result = RemoveEdge.mutate(&mut net);
+        assert!(result.is_ok(), "RemoveEdge::mutate should not error on an edge-less graph");
+        assert!(!result.unwrap(), "RemoveEdge should return false when there are no edges to remove");
+    }
+
+    #[test]
+    fn remove_edge_succeeds_when_edge_present() {
+        let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
+        let mut g = create_graph(&input_nodes, &output_nodes);
+        g.add_edge(GraphLocation::new(0, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
+        let mut net = Net { graph: g, input_layer: 0, output_layer: 1 };
+
+        assert_eq!(net.graph.layers[0][0].connections.len(), 1, "Should start with 1 edge");
+        let result = RemoveEdge.mutate(&mut net);
+        assert!(result.is_ok());
+        // After removal the edge count should drop to 0
+        assert_eq!(net.graph.layers[0][0].connections.len(), 0, "Edge should be removed after mutation");
+    }
+
+    #[test]
+    fn remove_neuron_returns_false_on_two_layer_graph() {
+        // A 2-layer graph (input + output) has no hidden layers to remove.
+        let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
+        let g = create_graph(&input_nodes, &output_nodes);
+        let mut net = Net { graph: g, input_layer: 0, output_layer: 1 };
+
+        let result = RemoveNeuron.mutate(&mut net, &[], &|_| 0);
+        assert!(result.is_ok(), "RemoveNeuron should not error on a 2-layer graph");
+        assert!(!result.unwrap(), "RemoveNeuron should return false when no hidden neurons exist");
+    }
+
+    #[test]
+    fn remove_neuron_removes_a_hidden_node() {
+        let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 2, "a".to_owned()))];
+        let mut g = create_graph(&input_nodes, &output_nodes);
+
+        // Insert a hidden layer with one neuron
+        g.add_layer(1);
+        g.add_node(1, GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: 0.0, id: 1 })))).unwrap();
+
+        let mut net = Net { graph: g, input_layer: 0, output_layer: 2 };
+        assert_eq!(net.graph.layers[1].len(), 1, "Should start with 1 hidden neuron");
+
+        let result = RemoveNeuron.mutate(&mut net, &[], &|_| 0);
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "RemoveNeuron should return true when a hidden neuron was removed");
+        assert_eq!(net.graph.layers[1].len(), 0, "Hidden neuron should be gone after mutation");
+    }
+
 }

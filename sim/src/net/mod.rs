@@ -36,7 +36,7 @@ impl Plugin for NeuralNetPlugin {
                     .in_set(IwSet::Events),
             )
             .add_systems(
-                Update,
+                InspectWindowContextPass,
                 inspect_window
                     .run_if(in_state(InspectWindowState::Display))
                     .in_set(IwSet::Window)

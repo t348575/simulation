@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_egui::EguiPrimaryContextPass;
 use bevy_vector_shapes::Shape2dPlugin;
 
 use crate::{InspectWindowState, TabState};
@@ -19,13 +20,10 @@ impl Plugin for SimulationPlugin {
             .add_plugins(Shape2dPlugin::default())
             .add_systems(Startup, init_runner)
             .add_systems(OnEnter(TabState::Simulation), setup)
-            .add_systems(Update, control_panel.run_if(in_state(TabState::Simulation)))
+            .add_systems(Update, poll_generated_world)
             .add_systems(
-                OnTransition {
-                    from: SimulationState::None,
-                    to: SimulationState::Paused,
-                },
-                initialize_world,
+                EguiPrimaryContextPass,
+                control_panel.run_if(in_state(TabState::Simulation)),
             )
             .add_systems(
                 Update,

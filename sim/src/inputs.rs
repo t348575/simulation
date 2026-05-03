@@ -114,6 +114,12 @@ impl InputNeuron for BlankInput {
     }
 }
 
+impl BlankInput {
+    pub fn new(value: f32, id: usize) -> Box<dyn InputNeuron> {
+        Box::new(Self { value, id })
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
 pub struct TestNeuronA {
     value: f32,

@@ -3,7 +3,7 @@ use std::thread;
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_egui::{
     egui::{self, collapsing_header::CollapsingState, Layout},
-    EguiContext,
+    EguiContexts,
 };
 use bevy_vector_shapes::prelude::*;
 
@@ -13,9 +13,10 @@ use crate::{net::resources::InspectNet, BaseNodes, TabState};
 
 use super::resources::*;
 
-const CREATURE_DIM: f32 = 5.0;
+const POISON_DIM: f32 = 5.0;
 const CREATURE_COLOR: &str = "3686ff";
 const FOOD_COLOR: &str = "54ff71";
+const POISON_COLOR: &str = "ff3864";
 
 pub fn init_runner(mut commands: Commands) {
     let (r, tx, rx) = Runner::new();
@@ -30,14 +31,14 @@ pub fn setup(
     window_query: Query<&Window, With<PrimaryWindow>>,
     mut data: ResMut<Simulation>,
 ) {
-    let window = window_query.get_single().unwrap();
+    let window = window_query.single().unwrap();
     control_panel.width = window.width().to_string();
     control_panel.height = window.height().to_string();
     data.window_dims = (window.width(), window.height());
 }
 
 pub fn control_panel(
-    mut egui_ctx: Query<&mut EguiContext, With<PrimaryWindow>>,
+    mut egui_ctx: EguiContexts,
     mut next_tab_state: ResMut<NextState<TabState>>,
     mut control_panel: ResMut<ControlPanel>,
     base_nodes: Res<BaseNodes>,
@@ -49,7 +50,8 @@ pub fn control_panel(
     time: Res<Time>,
     runner: Res<RunnerResource>,
 ) {
-    egui::SidePanel::right("Control panel").show(egui_ctx.single_mut().get_mut(), |ui| {
+    let egui_ctx = egui_ctx.ctx_mut().unwrap();
+    egui::SidePanel::right("Control panel").show(egui_ctx, |ui| {
         let id = ui.make_persistent_id("start/stop");
         CollapsingState::load_with_default_open(ui.ctx(), id, true)
             .show_header(ui, |ui| {
@@ -72,64 +74,67 @@ pub fn control_panel(
                 });
 
                 ui.horizontal(|ui| {
-                    ui.set_enabled(control_panel.can_create_sim);
-                    let button = ui.add_sized(
-                        (ui.available_width(), 0.0),
-                        egui::Button::new("Create new simulation"),
-                    );
-                    if button.clicked() {
-                        runner
-                            .tx
-                            .send(RunnerReq::Generate(Generate {
-                                num_creatures: control_panel.initial_num_creatures.parse().unwrap(),
-                                dims: (
-                                    control_panel.width.parse().unwrap(),
-                                    control_panel.height.parse().unwrap(),
-                                ),
-                                input_nodes: base_nodes.input_nodes.clone(),
-                                output_nodes: base_nodes.output_nodes.clone(),
-                            }))
-                            .expect("Could not send pause request");
-                        control_panel.can_create_sim = false;
-                        next_sim_state.set(SimulationState::Paused);
-                        runner
-                            .tx
-                            .send(RunnerReq::Pause)
-                            .expect("Could not send pause request");
-                    }
+                    ui.add_enabled_ui(control_panel.can_create_sim, |ui| {
+                        let button = ui.add_sized(
+                            (ui.available_width(), 0.0),
+                            egui::Button::new("Create new simulation"),
+                        );
+                        if button.clicked() {
+                            runner
+                                .tx
+                                .send(RunnerReq::Generate(Generate {
+                                    num_creatures: control_panel
+                                        .initial_num_creatures
+                                        .parse()
+                                        .unwrap(),
+                                    dims: (
+                                        control_panel.width.parse().unwrap(),
+                                        control_panel.height.parse().unwrap(),
+                                    ),
+                                    input_nodes: base_nodes.input_nodes.clone(),
+                                    output_nodes: base_nodes.output_nodes.clone(),
+                                }))
+                                .expect("Could not send pause request");
+                            control_panel.can_create_sim = false;
+                        }
+                    });
                 });
 
                 ui.horizontal(|ui| {
-                    ui.set_enabled(!control_panel.can_create_sim);
+                    ui.add_enabled_ui(!control_panel.can_create_sim, |ui| {
+                        let button_txt = match sim_state.get() {
+                            SimulationState::None => "Start simulation",
+                            SimulationState::Paused => "Resume simulation",
+                            SimulationState::Running => "Pause simulation",
+                        };
 
-                    let button_txt = match sim_state.get() {
-                        SimulationState::None => "Start simulation",
-                        SimulationState::Paused => "Resume simulation",
-                        SimulationState::Running => "Pause simulation",
-                    };
+                        let button = ui
+                            .add_sized((ui.available_width(), 0.0), egui::Button::new(button_txt));
 
-                    let button =
-                        ui.add_sized((ui.available_width(), 0.0), egui::Button::new(button_txt));
-
-                    if button.clicked() {
-                        match sim_state.get() {
-                            SimulationState::Paused => {
-                                next_sim_state.set(SimulationState::Running);
-                                runner
-                                    .tx
-                                    .send(RunnerReq::Resume)
-                                    .expect("Could not send resume request");
-                            }
-                            _ => {
-                                next_sim_state.set(SimulationState::Paused);
-                                runner
-                                    .tx
-                                    .send(RunnerReq::Pause)
-                                    .expect("Could not send pause request");
+                        if button.clicked() {
+                            match sim_state.get() {
+                                SimulationState::Paused => {
+                                    next_sim_state.set(SimulationState::Running);
+                                    runner
+                                        .tx
+                                        .send(RunnerReq::Resume)
+                                        .expect("Could not send resume request");
+                                }
+                                _ => {
+                                    next_sim_state.set(SimulationState::Paused);
+                                    runner
+                                        .tx
+                                        .send(RunnerReq::Pause)
+                                        .expect("Could not send pause request");
+                                }
                             }
                         }
-                    }
+                    });
                 });
+
+                if !control_panel.can_create_sim && *sim_state.get() == SimulationState::None {
+                    ui.label("Generating simulation...");
+                }
 
                 match sim_state.get() {
                     SimulationState::None => {}
@@ -157,7 +162,7 @@ pub fn control_panel(
 
         ui.separator();
         ui.label(format!("Ticks: {}", data.ticks));
-        ui.label(format!("FPS: {}", 1.0 / time.delta_seconds_f64()));
+        ui.label(format!("FPS: {}", 1.0 / time.delta_secs_f64()));
 
         ui.with_layout(Layout::bottom_up(egui::Align::Center), |ui| {
             let button = ui.add_sized((ui.available_width(), 0.0), egui::Button::new("Main menu"));
@@ -168,29 +173,36 @@ pub fn control_panel(
     });
 }
 
-pub fn initialize_world(
+pub fn poll_generated_world(
     mut shapes: ShapeCommands,
     mut data: ResMut<Simulation>,
+    mut next_sim_state: ResMut<NextState<SimulationState>>,
+    sim_state: Res<State<SimulationState>>,
+    control_panel: Res<ControlPanel>,
     runner: Res<RunnerResource>,
 ) {
-    runner
-        .tx
-        .send(RunnerReq::GetPositions)
-        .expect("Could not send positions request");
-    match runner.rx.recv().expect("Could not receive positions") {
-        RunnerRes::Positions(p) => {
-            data.creatures = p.creatures;
-            data.food = p.food;
-        }
-        _ => unreachable!(),
+    if control_panel.can_create_sim || *sim_state.get() != SimulationState::None {
+        return;
     }
 
-    render_world(&mut data, &mut shapes);
+    while let Ok(res) = runner.rx.try_recv() {
+        match res {
+            RunnerRes::Positions(p) => {
+                data.creatures = p.creatures;
+                data.food = p.food;
+                data.poison = p.poison;
+                render_world(&mut data, &mut shapes);
+                next_sim_state.set(SimulationState::Paused);
+                return;
+            }
+            RunnerRes::Net(_) => {}
+        }
+    }
 }
 
 fn clear_screen(commands: &mut Commands, rects: Query<Entity, With<RectangleComponent>>) {
     for item in rects.iter() {
-        commands.entity(item).despawn_recursive();
+        commands.entity(item).despawn();
     }
 }
 
@@ -201,19 +213,22 @@ pub fn run_simulation(
     rects: Query<Entity, With<RectangleComponent>>,
     runner: Res<RunnerResource>,
 ) {
-    clear_screen(&mut commands, rects);
-
-    runner
-        .tx
-        .send(RunnerReq::GetPositions)
-        .expect("Could not send positions request");
-    match runner.rx.recv().expect("Could not receive positions") {
-        RunnerRes::Positions(p) => {
-            data.creatures = p.creatures;
-            data.food = p.food;
+    let mut positions = None;
+    while let Ok(res) = runner.rx.try_recv() {
+        match res {
+            RunnerRes::Positions(p) => positions = Some(p),
+            RunnerRes::Net(_) => {}
         }
-        _ => unreachable!(),
     }
+
+    let Some(p) = positions else {
+        return;
+    };
+
+    clear_screen(&mut commands, rects);
+    data.creatures = p.creatures;
+    data.food = p.food;
+    data.poison = p.poison;
 
     render_world(&mut data, &mut shapes);
     data.ticks += 1;
@@ -232,11 +247,11 @@ pub fn inspect_creature(
     buttons: Res<ButtonInput<MouseButton>>,
     q_windows: Query<&Window, With<PrimaryWindow>>,
     data: Res<Simulation>,
-    mut inspect_net: EventWriter<InspectNet>,
+    mut inspect_net: MessageWriter<InspectNet>,
     runner: Res<RunnerResource>,
 ) {
     if buttons.just_pressed(MouseButton::Left) {
-        let window = q_windows.single();
+        let window = q_windows.single().unwrap();
         if let Some(position) = window.cursor_position() {
             // let position =
             //     convert_bottom_left_to_center_coords(position, (window.width(), window.height()));
@@ -249,7 +264,9 @@ pub fn inspect_creature(
                     .send(RunnerReq::GetNet(c.id))
                     .expect("Could not send net request");
                 match runner.rx.recv().expect("Could not receive net") {
-                    RunnerRes::Net(n) => inspect_net.send(InspectNet(n.unwrap())),
+                    RunnerRes::Net(n) => {
+                        inspect_net.write(InspectNet(n.unwrap()));
+                    }
                     _ => unreachable!(),
                 };
             }
@@ -258,7 +275,7 @@ pub fn inspect_creature(
 }
 
 fn render_world(data: &mut Simulation, shapes: &mut ShapeCommands) {
-    shapes.color = Color::hex(CREATURE_COLOR).unwrap();
+    shapes.color = Color::from(Srgba::hex(CREATURE_COLOR).unwrap());
     data.creatures.iter().for_each(|c| {
         // if speed > 0.0 && (movement_vec.x > 0.0 || movement_vec.y > 0.0) {
         //     // inspect_net.send(InspectNet(c.brain.clone()));
@@ -277,13 +294,23 @@ fn render_world(data: &mut Simulation, shapes: &mut ShapeCommands) {
             data.window_dims,
         );
         shapes.transform.translation = Vec3::new(coords.x, coords.y, 0.0);
-        shapes.rect(Vec2::new(CREATURE_DIM, CREATURE_DIM));
+        shapes.rect(Vec2::new(c.size, c.size));
     });
 
-    shapes.color = Color::hex(FOOD_COLOR).unwrap();
+    shapes.color = Color::from(Srgba::hex(FOOD_COLOR).unwrap());
     data.food.iter().for_each(|c| {
+        let coords = convert_bottom_left_to_center_coords(
+            Vec2::new(c.position.0, c.position.1),
+            data.window_dims,
+        );
+        shapes.transform.translation = Vec3::new(coords.x, coords.y, 0.0);
+        shapes.rect(Vec2::new(c.size, c.size));
+    });
+
+    shapes.color = Color::from(Srgba::hex(POISON_COLOR).unwrap());
+    data.poison.iter().for_each(|c| {
         let coords = convert_bottom_left_to_center_coords(Vec2::new(c.0, c.1), data.window_dims);
         shapes.transform.translation = Vec3::new(coords.x, coords.y, 0.0);
-        shapes.rect(Vec2::new(CREATURE_DIM, CREATURE_DIM));
+        shapes.rect(Vec2::new(POISON_DIM, POISON_DIM));
     });
 }

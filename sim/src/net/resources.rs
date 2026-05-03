@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Resource, Debug)]
 pub struct InspectorWindowId(pub Entity);
 
-#[derive(Event)]
+#[derive(Message)]
 pub struct InspectNet(pub Net);
 
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -39,6 +39,7 @@ pub struct WindowInfo {
 pub struct InspectInfo(pub (GraphLocation, GraphNode));
 
 #[derive(Resource, Debug)]
+#[allow(dead_code)]
 pub struct ControlPanel {
     pub num_nets: String,
     pub view_net: String,

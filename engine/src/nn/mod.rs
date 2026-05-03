@@ -272,13 +272,33 @@ impl NeuralGraph {
         }
     }
 
+    /// Grows the graph by inserting empty layers just before the output until `idx` is a
+    /// valid hidden-layer address. Unlike `add_layer`, this never inserts at `idx` itself —
+    /// it only ensures the slot exists so a node can be placed there.
+    pub fn ensure_layer_exists(&mut self, idx: GraphSize) {
+        while idx as usize >= self.layers.len().saturating_sub(1) {
+            let before_output = self.layers.len().saturating_sub(1).max(1);
+            let shifted = before_output as GraphSize;
+            self.layers.insert(before_output, Vec::new());
+            for layer in self.layers.iter_mut() {
+                for node in layer.iter_mut() {
+                    for c in node.connections.iter_mut() {
+                        if c.to.layer >= shifted {
+                            c.to.layer += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn push_node_at(&mut self, layer: GraphSize, value: Node) -> GraphLocation {
         self.layers[layer as usize].push(GraphNode::new(value));
         GraphLocation::new(layer, (self.layers[layer as usize].len() - 1) as GraphSize)
     }
 
     pub fn create_node_at(&mut self, location: &GraphLocation, value: Node) {
-        self.add_layer(location.layer);
+        self.ensure_layer_exists(location.layer);
         while location.node as usize > self.layers[location.layer as usize].len() {
             self.layers[location.layer as usize].push(GraphNode::blank());
         }
@@ -297,6 +317,10 @@ impl NeuralGraph {
                 }
             }
         }
+
+        // Remove higher node indices first within each layer so earlier removals
+        // don't shift indices and invalidate subsequent removals in the same layer.
+        to_delete.sort_by(|a, b| a.layer.cmp(&b.layer).then(b.node.cmp(&a.node)));
 
         to_delete.drain(..).for_each(|loc| {
             self.layers[loc.layer as usize].remove(loc.node as usize);
@@ -343,7 +367,7 @@ impl NeuralGraph {
         }
         Some(GraphLocation::new(
             layer_idx as GraphSize,
-            rng.gen_range(0..layer.len() - subtract_from_end) as GraphSize,
+            rng.gen_range(0..layer.len()) as GraphSize,
         ))
     }
 
@@ -455,58 +479,50 @@ impl Net {
             g.add_node(input_layer, GraphNode::new(value.clone()))?;
         }
 
-        let mut num_internal_layers = rng.gen_range(0..5);
-        let mut remove_layers = 0;
+        // Always generate at least 1 hidden layer with meaningful node counts.
+        let num_hidden_layers = rng.gen_range(1..=6usize);
         let mut id = 0;
-        for _ in 0..num_internal_layers {
-            let num_nodes = rng.gen_range(0..10);
-            if num_nodes == 0 {
-                remove_layers += 1;
-                continue;
-            }
+        for _ in 0..num_hidden_layers {
+            let num_nodes = rng.gen_range(2..=14usize);
             let l = g.add_layer_to_end();
             for _ in 0..num_nodes {
                 g.add_node(
                     l,
-                    GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: random(), id }))),
+                    GraphNode::new(Node::Neuron(Box::new(BasicNeuron {
+                        bias: rng.gen_range(-1.0..1.0),
+                        id,
+                    }))),
                 )?;
                 id += 1;
             }
         }
-        num_internal_layers -= remove_layers;
-        debug!("{num_internal_layers}");
+        debug!("{num_hidden_layers}");
 
         let output_layer = g.add_layer_to_end();
         for value in output_nodes {
             g.add_node(output_layer, GraphNode::new(value.clone()))?;
         }
 
-        let num_connections = rng.gen_range(0..(4 * (num_internal_layers + 1)));
+        // More connections, better weight range, and mostly-enabled edges.
+        let total_layers = (num_hidden_layers + 2) as GraphSize;
+        let num_connections =
+            rng.gen_range((4 * (num_hidden_layers + 1))..(12 * (num_hidden_layers + 1)));
         let mut actual_connections = 0;
         let mut connection_pairs = Vec::new();
-        while actual_connections != num_connections {
-            let from_layer: GraphSize = rng.gen_range(0..=num_internal_layers + 1);
-            let to_layer: GraphSize = rng.gen_range(0..=num_internal_layers + 1);
-            if from_layer >= to_layer {
+        let mut attempts = 0;
+        while actual_connections < num_connections && attempts < num_connections * 10 {
+            attempts += 1;
+            let from_layer: GraphSize = rng.gen_range(0..total_layers - 1);
+            let to_layer: GraphSize = rng.gen_range(from_layer + 1..total_layers);
+
+            let from_len = g.layers[from_layer as usize].len();
+            let to_len = g.layers[to_layer as usize].len();
+            if from_len == 0 || to_len == 0 {
                 continue;
             }
 
-            let from_node = rng.gen_range(
-                0..g.layers
-                    .iter()
-                    .skip(from_layer as usize)
-                    .next()
-                    .unwrap()
-                    .len() as u16,
-            );
-            let to_node = rng.gen_range(
-                0..g.layers
-                    .iter()
-                    .skip(to_layer as usize)
-                    .next()
-                    .unwrap()
-                    .len() as u16,
-            );
+            let from_node = rng.gen_range(0..from_len) as GraphSize;
+            let to_node = rng.gen_range(0..to_len) as GraphSize;
             let from = GraphLocation {
                 layer: from_layer,
                 node: from_node,
@@ -521,7 +537,14 @@ impl Net {
             }
 
             connection_pairs.push((from.clone(), to.clone()));
-            g.add_edge(from, to, Edge::random())?;
+            g.add_edge(
+                from,
+                to,
+                Edge {
+                    weight: rng.gen_range(-3.0..3.0),
+                    enabled: rng.gen_bool(0.85),
+                },
+            )?;
             actual_connections += 1;
         }
 
@@ -771,7 +794,10 @@ mod test_requirements {
 mod test {
     use crate::{activations::Sigmoid, nn::Edge};
 
-    use super::{test_requirements::*, GraphLocation, GraphNode, Node};
+    use super::{
+        test_requirements::*, BasicNeuron, GraphLocation, GraphNode, NeuralGraph, NeuralGraphError,
+        Net, Node,
+    };
 
     #[test]
     #[rustfmt::skip]
@@ -811,5 +837,259 @@ mod test {
         g.add_edge(GraphLocation::new(3, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
 
         assert!(g.has_cycle(Some(GraphLocation::new(0, 1))));
+    }
+
+    #[test]
+    fn add_node_out_of_bounds_returns_layer_not_found() {
+        let mut g = NeuralGraph::new();
+        g.add_layer_to_end(); // only layer 0 exists
+        let result = g.add_node(5, GraphNode::blank());
+        assert!(
+            matches!(result, Err(NeuralGraphError::LayerNotFound(_))),
+            "Expected LayerNotFound for layer index 5, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn add_edge_to_missing_node_returns_node_not_found() {
+        let mut g = NeuralGraph::new();
+        g.add_layer_to_end();
+        g.add_layer_to_end();
+        g.add_node(0, GraphNode::new(Node::Input(Box::new(BlankInput::new(0.0, 0))))).unwrap();
+        // layer 1 is empty – no node at (1, 0)
+        let result = g.add_edge(
+            GraphLocation::new(0, 0),
+            GraphLocation::new(1, 0),
+            Edge::default(),
+        );
+        assert!(
+            matches!(result, Err(NeuralGraphError::NodeNotFound(_))),
+            "Expected NodeNotFound, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn add_edge_duplicate_returns_connection_exists() {
+        let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
+        let mut g = create_graph(&input_nodes, &output_nodes);
+        g.add_edge(GraphLocation::new(0, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
+        let result = g.add_edge(GraphLocation::new(0, 0), GraphLocation::new(1, 0), Edge::default());
+        assert!(
+            matches!(result, Err(NeuralGraphError::ConnectionExists { .. })),
+            "Expected ConnectionExists for duplicate edge, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn remove_edge_returns_false_when_edge_absent() {
+        let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
+        let mut g = create_graph(&input_nodes, &output_nodes);
+        // No edge added yet – the lengths are equal → returns true (unchanged)
+        let result = g.remove_edge(&GraphLocation::new(0, 0), &GraphLocation::new(1, 0));
+        assert!(result, "remove_edge should return true (unchanged) when no matching edge exists");
+    }
+
+    #[test]
+    fn remove_edge_returns_false_after_successful_removal() {
+        let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
+        let mut g = create_graph(&input_nodes, &output_nodes);
+        g.add_edge(GraphLocation::new(0, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
+        assert_eq!(g.layers[0][0].connections.len(), 1, "Should have 1 edge before removal");
+        let result = g.remove_edge(&GraphLocation::new(0, 0), &GraphLocation::new(1, 0));
+        // After removal lengths differ → returns false
+        assert!(!result, "remove_edge should return false when an edge was actually removed");
+        assert_eq!(g.layers[0][0].connections.len(), 0, "Edge should be gone after removal");
+    }
+
+    #[test]
+    fn removed_node_deletes_node_and_clears_incoming_edges() {
+        let input_nodes = [
+            Node::Input(Box::new(BlankInput::new(0.0, 0))),
+            Node::Input(Box::new(BlankInput::new(0.0, 1))),
+        ];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 2, "a".to_owned()))];
+        let mut g = create_graph(&input_nodes, &output_nodes);
+        g.add_edge(GraphLocation::new(0, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
+        g.add_edge(GraphLocation::new(0, 1), GraphLocation::new(1, 0), Edge::default()).unwrap();
+
+        assert_eq!(g.layers[1].len(), 1);
+        g.removed_node(GraphLocation::new(1, 0));
+
+        assert_eq!(g.layers[1].len(), 0, "Output node should be removed");
+        assert_eq!(g.layers[0][0].connections.len(), 0, "Edge from input 0 should be cleaned up");
+        assert_eq!(g.layers[0][1].connections.len(), 0, "Edge from input 1 should be cleaned up");
+    }
+
+    #[test]
+    fn add_layer_shifts_existing_edge_targets() {
+        let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
+        let mut g = create_graph(&input_nodes, &output_nodes);
+        g.add_edge(GraphLocation::new(0, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
+
+        assert_eq!(g.layers[0][0].connections[0].to.layer, 1);
+        g.add_layer(1); // inserts empty hidden layer between input and output
+        assert_eq!(g.layers.len(), 3, "Should now have 3 layers");
+        assert_eq!(
+            g.layers[0][0].connections[0].to.layer, 2,
+            "Edge target should have shifted from layer 1 to layer 2"
+        );
+    }
+
+    #[test]
+    fn prune_removes_none_nodes_and_keeps_real_nodes() {
+        let mut g = NeuralGraph::new();
+        g.add_layer_to_end();
+        g.add_node(0, GraphNode::new(Node::Input(Box::new(BlankInput::new(0.0, 0))))).unwrap();
+        g.add_node(0, GraphNode::blank()).unwrap(); // Node::None – should be pruned
+        g.add_layer_to_end();
+        g.add_node(1, GraphNode::new(Node::Output(Sigmoid::new(0.0, 1, "a".to_owned())))).unwrap();
+
+        assert_eq!(g.layers[0].len(), 2, "Before prune: 2 nodes in layer 0");
+        g.prune();
+        assert_eq!(g.layers[0].len(), 1, "After prune: only the real input node should remain");
+        assert!(
+            matches!(g.layers[0][0].value, Node::Input(_)),
+            "Remaining node should be the Input node, not the blank placeholder"
+        );
+    }
+
+    #[test]
+    fn get_node_returns_none_for_nonexistent_layer() {
+        let g = NeuralGraph::new();
+        assert!(g.get_node(&GraphLocation::new(99, 0)).is_none());
+    }
+
+    #[test]
+    fn get_node_returns_none_for_nonexistent_node_in_layer() {
+        let mut g = NeuralGraph::new();
+        g.add_layer_to_end();
+        // Layer 0 is empty
+        assert!(g.get_node(&GraphLocation::new(0, 5)).is_none());
+    }
+
+    #[test]
+    fn from_preserving_basic_copies_input_and_output_nodes() {
+        let input_nodes = [
+            Node::Input(Box::new(BlankInput::new(1.0, 0))),
+            Node::Input(Box::new(BlankInput::new(2.0, 1))),
+        ];
+        let output_nodes = [Node::Output(Sigmoid::new(0.0, 2, "Sigmoid".to_owned()))];
+        let g = create_graph(&input_nodes, &output_nodes);
+        let original = Net { graph: g, input_layer: 0, output_layer: 1 };
+
+        let preserved = Net::from_preserving_basic(&original).expect("from_preserving_basic failed");
+
+        assert_eq!(preserved.graph.layers.len(), 2, "Preserved net should have exactly 2 layers");
+        assert_eq!(preserved.graph.layers[0].len(), 2, "Should preserve 2 input nodes");
+        assert_eq!(preserved.graph.layers[1].len(), 1, "Should preserve 1 output node");
+        // No edges should be carried over
+        assert_eq!(
+            preserved.graph.layers[0][0].connections.len(), 0,
+            "Preserved net should have no edges"
+        );
+    }
+
+    #[test]
+    fn tick_direct_input_to_output_sigmoid_zero() {
+        // Input value 0.0 → direct edge (weight 1.0) → Sigmoid → sigmoid(0.0) = 0.5
+        let mut g = NeuralGraph::new();
+        g.add_layer_to_end();
+        g.add_node(0, GraphNode::new(Node::Input(Box::new(BlankInput::new(0.0, 0))))).unwrap();
+        g.add_layer_to_end();
+        g.add_node(1, GraphNode::new(Node::Output(Sigmoid::new(0.0, 1, "Sigmoid".to_owned())))).unwrap();
+        g.add_edge(
+            GraphLocation::new(0, 0),
+            GraphLocation::new(1, 0),
+            Edge { weight: 1.0, enabled: true },
+        ).unwrap();
+
+        let mut net = Net { graph: g, input_layer: 0, output_layer: 1 };
+        net.tick();
+
+        if let Node::Output(o) = &net.graph.layers[1][0].value {
+            assert!(
+                (o.value() - 0.5).abs() < 1e-6,
+                "sigmoid(0.0) should be 0.5, got {}",
+                o.value()
+            );
+        } else {
+            panic!("Expected Output node at layer 1, node 0");
+        }
+    }
+
+    #[test]
+    fn tick_through_hidden_layer_with_known_weights() {
+        // Input(2.0) → [weight=0.5] → BasicNeuron(bias=1.0) → [weight=1.0] → Sigmoid
+        // hidden step : 0.5 × 2.0 = 1.0
+        // hidden finish: 1.0 + 1.0(bias) = 2.0
+        // output step : 1.0 × 2.0 = 2.0
+        // output finish: sigmoid(2.0) ≈ 0.8807970
+        let mut g = NeuralGraph::new();
+        g.add_layer_to_end(); // layer 0
+        g.add_node(0, GraphNode::new(Node::Input(Box::new(BlankInput::new(2.0, 0))))).unwrap();
+
+        g.add_layer_to_end(); // layer 1
+        g.add_node(1, GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: 1.0, id: 1 })))).unwrap();
+
+        g.add_layer_to_end(); // layer 2
+        g.add_node(2, GraphNode::new(Node::Output(Sigmoid::new(0.0, 2, "Sigmoid".to_owned())))).unwrap();
+
+        g.add_edge(
+            GraphLocation::new(0, 0),
+            GraphLocation::new(1, 0),
+            Edge { weight: 0.5, enabled: true },
+        ).unwrap();
+        g.add_edge(
+            GraphLocation::new(1, 0),
+            GraphLocation::new(2, 0),
+            Edge { weight: 1.0, enabled: true },
+        ).unwrap();
+
+        let mut net = Net { graph: g, input_layer: 0, output_layer: 2 };
+        net.tick();
+
+        use std::f32::consts::E;
+        let expected = 1.0 / (1.0 + E.powf(-2.0f32));
+        if let Node::Output(o) = &net.graph.layers[2][0].value {
+            assert!(
+                (o.value() - expected).abs() < 1e-6,
+                "Expected sigmoid(2.0) ≈ {expected}, got {}",
+                o.value()
+            );
+        } else {
+            panic!("Expected Output node at layer 2, node 0");
+        }
+    }
+
+    #[test]
+    fn tick_disabled_edge_does_not_propagate() {
+        // Input(5.0) → disabled edge → Sigmoid. Output should stay at its initial 0.0.
+        let mut g = NeuralGraph::new();
+        g.add_layer_to_end();
+        g.add_node(0, GraphNode::new(Node::Input(Box::new(BlankInput::new(5.0, 0))))).unwrap();
+        g.add_layer_to_end();
+        g.add_node(1, GraphNode::new(Node::Output(Sigmoid::new(0.0, 1, "Sigmoid".to_owned())))).unwrap();
+        g.add_edge(
+            GraphLocation::new(0, 0),
+            GraphLocation::new(1, 0),
+            Edge { weight: 1.0, enabled: false }, // disabled!
+        ).unwrap();
+
+        let mut net = Net { graph: g, input_layer: 0, output_layer: 1 };
+        net.tick();
+
+        if let Node::Output(o) = &net.graph.layers[1][0].value {
+            assert_eq!(
+                o.value(), 0.0,
+                "Disabled edge should not propagate; output should remain at initial 0.0, got {}",
+                o.value()
+            );
+        } else {
+            panic!("Expected Output node");
+        }
     }
 }

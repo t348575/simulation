@@ -1,23 +1,21 @@
-use bevy::{
-    prelude::*,
-    window::{PrimaryWindow, WindowClosed},
-};
-use bevy_egui::{egui, EguiContext};
+use bevy::{prelude::*, window::WindowClosed};
+use bevy_egui::{egui, EguiContexts};
 
 use crate::{InspectWindowState, TabState};
 
 pub fn main_menu(
-    mut egui_ctx: Query<&mut EguiContext, With<PrimaryWindow>>,
+    mut egui_ctx: EguiContexts,
     mut next_tab_state: ResMut<NextState<TabState>>,
     mut next_inspector_state: ResMut<NextState<InspectWindowState>>,
     inspector_state: Res<State<InspectWindowState>>,
 ) {
+    let egui_ctx = egui_ctx.ctx_mut().unwrap();
     egui::Window::new("Main Menu")
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .resizable(false)
         .movable(false)
         .collapsible(false)
-        .show(egui_ctx.single_mut().get_mut(), |ui| {
+        .show(egui_ctx, |ui| {
             ui.horizontal(|ui| {
                 let button =
                     ui.add_sized((ui.available_width(), 0.0), egui::Button::new("Simulation"));
@@ -43,7 +41,7 @@ pub fn main_menu(
 }
 
 pub fn inspector_exit(
-    mut events: EventReader<WindowClosed>,
+    mut events: MessageReader<WindowClosed>,
     mut next_inspector_state: ResMut<NextState<InspectWindowState>>,
 ) {
     for _ in events.read() {

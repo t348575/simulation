@@ -1,11 +1,12 @@
 use bevy::{
+    camera::{visibility::RenderLayers, RenderTarget},
+    ecs::schedule::ScheduleLabel,
     prelude::*,
-    render::{camera::RenderTarget, view::RenderLayers},
     window::WindowRef,
 };
 use bevy_egui::{
     egui::{self, Pos2},
-    EguiContext,
+    EguiContext, EguiMultipassSchedule, PrimaryEguiContext,
 };
 use bevy_vector_shapes::prelude::*;
 use engine::nn::{GraphLocation, Net};
@@ -17,6 +18,9 @@ const SPACING: f32 = 10.0;
 
 #[derive(Component)]
 pub struct InspectWindow;
+
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct InspectWindowContextPass;
 
 pub fn setup(mut commands: Commands) {
     let inspect_net_window = commands
@@ -32,31 +36,27 @@ pub fn setup(mut commands: Commands) {
 
     let render_layer = RenderLayers::layer(1);
     commands.spawn((
-        Camera2dBundle {
-            camera: Camera {
-                target: RenderTarget::Window(WindowRef::Entity(inspect_net_window)),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
+        Camera2d,
+        RenderTarget::Window(WindowRef::Entity(inspect_net_window)),
+        EguiMultipassSchedule::new(InspectWindowContextPass),
         render_layer,
     ));
     commands.insert_resource(InspectorWindowId(inspect_net_window));
 }
 
 pub fn exit_inspector(mut commands: Commands, inspector_window_id: Res<InspectorWindowId>) {
-    commands.entity(inspector_window_id.0).despawn_recursive();
+    commands.entity(inspector_window_id.0).despawn();
 }
 
 pub fn get_inspect_net(
     mut shapes: ShapeCommands,
     mut commands: Commands,
-    mut event_reader: EventReader<InspectNet>,
+    mut event_reader: MessageReader<InspectNet>,
     window: Query<&Window, With<InspectWindow>>,
     circles: Query<Entity, (With<DiscComponent>, With<InspectWindow>)>,
     lines: Query<Entity, (With<LineComponent>, With<InspectWindow>)>,
 ) {
-    let w = window.get_single().unwrap();
+    let w = window.single().unwrap();
     let dims = (w.width(), w.height());
     for item in event_reader.read() {
         let nn = draw_neural_net(
@@ -90,16 +90,16 @@ pub fn draw_neural_net(
     shapes: &mut ShapeCommands,
 ) -> Nn {
     for item in circles.iter() {
-        commands.entity(item).despawn_recursive();
+        commands.entity(item).despawn();
     }
     for item in lines.iter() {
-        commands.entity(item).despawn_recursive();
+        commands.entity(item).despawn();
     }
 
     let render_layer = RenderLayers::layer(1);
     let mut nodes = Vec::new();
 
-    shapes.color = Color::hex("1b1b1b").unwrap();
+    shapes.color = Color::from(Srgba::hex("1b1b1b").unwrap());
     for (num, layer) in net.graph.layers.iter().enumerate() {
         let count = layer.iter().count();
         let start_x = (-1.0 * dims.0 / 3.0) + ((CIRCLE_RADIUS * 2.0) + SPACING) * num as f32;
@@ -121,7 +121,7 @@ pub fn draw_neural_net(
             commands.spawn((
                 ShapeBundle::circle(shapes.config(), CIRCLE_RADIUS),
                 InspectWindow,
-                render_layer,
+                render_layer.clone(),
             ));
 
             for c in node.connections.iter() {
@@ -141,9 +141,9 @@ pub fn draw_neural_net(
                         / 2.0);
 
                 if c.value.enabled {
-                    shapes.color = Color::hex("1b1b1b").unwrap();
+                    shapes.color = Color::from(Srgba::hex("1b1b1b").unwrap());
                 } else {
-                    shapes.color = Color::hex("808080").unwrap();
+                    shapes.color = Color::from(Srgba::hex("808080").unwrap());
                 }
 
                 shapes.thickness = 5.0;
@@ -159,10 +159,10 @@ pub fn draw_neural_net(
                         ),
                     ),
                     InspectWindow,
-                    render_layer,
+                    render_layer.clone(),
                 ));
                 shapes.thickness = 0.0;
-                shapes.color = Color::hex("1b1b1b").unwrap();
+                shapes.color = Color::from(Srgba::hex("1b1b1b").unwrap());
             }
         }
     }
@@ -287,7 +287,7 @@ pub fn toggle_inspect_window(
     }
 
     if buttons.just_pressed(MouseButton::Left) {
-        let w = q_windows.single();
+        let w = q_windows.single().unwrap();
         if let Some(position) = w.cursor_position() {
             let x = position.x - w.width() / 2.0;
             let y = (position.y - w.height() / 2.0) * -1.0;
@@ -306,11 +306,12 @@ pub fn toggle_inspect_window(
 }
 
 pub fn inspect_window(
-    mut egui_ctx: Query<&mut EguiContext, With<InspectWindow>>,
+    mut egui_ctx: Single<&mut EguiContext, Without<PrimaryEguiContext>>,
     inspect_info: Res<InspectInfo>,
     mut window_state: ResMut<WindowInfo>,
 ) {
-    let mut style = (*egui_ctx.single_mut().get_mut().style()).clone();
+    let egui_ctx = egui_ctx.get_mut();
+    let mut style = (*egui_ctx.style()).clone();
 
     let window = egui::Window::new(format!(
         "Layer {} Node {}",
@@ -320,7 +321,7 @@ pub fn inspect_window(
         window_state.inspect_window_pos.0,
         window_state.inspect_window_pos.1,
     ))
-    .show(egui_ctx.single_mut().get_mut(), |ui| {
+    .show(egui_ctx, |ui| {
         ui.horizontal(|ui| {
             *style.text_styles.get_mut(&egui::TextStyle::Body).unwrap() =
                 egui::FontId::new(20.0, egui::FontFamily::Proportional);

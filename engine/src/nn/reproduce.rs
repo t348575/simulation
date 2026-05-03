@@ -251,8 +251,45 @@ mod test {
         //     output_nodes: output_nodes.to_vec(),
         // };
 
-        // std::fs::write("reproduce.bin", bincode::serialize(&sim).unwrap()).unwrap();
+        // std::fs::write("reproduce.bin", wincode::serialize(&sim).unwrap()).unwrap();
 
         assert_eq!(bincode::serialize(&compose_output).unwrap(), bincode::serialize(&output.graph).unwrap());
+    }
+
+    #[test]
+    fn default_iterator_sequences_indices_and_signals_done_at_last() {
+        use super::{DefaultIterator, Generator};
+
+        let reproducers = vec![Crossover::default(), Crossover::default(), Crossover::default()];
+        let a = Net::default();
+        let b = Net::default();
+
+        let mut iter = DefaultIterator::new();
+
+        let (idx, done) = iter.generate(&a.graph, &b.graph, &reproducers).unwrap();
+        assert_eq!(idx, 0, "First call should return index 0");
+        assert!(!done, "Should not be done after first of three steps");
+
+        let (idx, done) = iter.generate(&a.graph, &b.graph, &reproducers).unwrap();
+        assert_eq!(idx, 1, "Second call should return index 1");
+        assert!(!done, "Should not be done after second of three steps");
+
+        let (idx, done) = iter.generate(&a.graph, &b.graph, &reproducers).unwrap();
+        assert_eq!(idx, 2, "Third call should return index 2");
+        assert!(done, "Should signal done on the last step");
+    }
+
+    #[test]
+    fn default_iterator_single_reproducer_done_immediately() {
+        use super::{DefaultIterator, Generator};
+
+        let reproducers = vec![Crossover::default()];
+        let a = Net::default();
+        let b = Net::default();
+
+        let mut iter = DefaultIterator::new();
+        let (idx, done) = iter.generate(&a.graph, &b.graph, &reproducers).unwrap();
+        assert_eq!(idx, 0);
+        assert!(done, "With a single reproducer the very first call should be done");
     }
 }

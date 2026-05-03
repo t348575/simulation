@@ -1,12 +1,13 @@
 use std::thread::JoinHandle;
 
-use bevy::ecs::{schedule::States, system::Resource};
+use bevy::prelude::*;
 use flume::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
-use super::sim::{BasicCreature, RunnerReq, RunnerRes};
+use super::sim::{BasicCreature, BasicFood, RunnerReq, RunnerRes};
 
 #[derive(Resource)]
+#[allow(dead_code)]
 pub struct RunnerResource {
     pub tx: Sender<RunnerReq>,
     pub rx: Receiver<RunnerRes>,
@@ -18,7 +19,8 @@ pub struct Simulation {
     pub world_dim: (f32, f32),
     pub window_dims: (f32, f32),
     pub creatures: Vec<BasicCreature>,
-    pub food: Vec<(f32, f32)>,
+    pub food: Vec<BasicFood>,
+    pub poison: Vec<(f32, f32)>,
     pub ticks: usize,
 }
 

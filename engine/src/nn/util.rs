@@ -196,3 +196,54 @@ pub fn connection_pair_exists(
         .position(|x| (x.0 == *from && x.1 == *to) || (x.0 == *to && x.1 == *from))
         .map_or_else(|| false, |_| true)
 }
+
+#[cfg(test)]
+mod test {
+    use crate::nn::GraphLocation;
+
+    use super::connection_pair_exists;
+
+    fn loc(layer: u16, node: u16) -> GraphLocation {
+        GraphLocation::new(layer, node)
+    }
+
+    #[test]
+    fn returns_true_when_pair_matches_forward_direction() {
+        let pairs = vec![(loc(0, 0), loc(1, 0)), (loc(1, 0), loc(2, 1))];
+        assert!(connection_pair_exists(&pairs, &loc(0, 0), &loc(1, 0)));
+        assert!(connection_pair_exists(&pairs, &loc(1, 0), &loc(2, 1)));
+    }
+
+    #[test]
+    fn returns_true_when_pair_matches_reversed_direction() {
+        // The function also matches (to, from) — i.e. the reverse
+        let pairs = vec![(loc(0, 0), loc(1, 0))];
+        assert!(
+            connection_pair_exists(&pairs, &loc(1, 0), &loc(0, 0)),
+            "Should match the reversed pair (1,0)→(0,0) since (0,0)→(1,0) is in the list"
+        );
+    }
+
+    #[test]
+    fn returns_false_when_pair_absent() {
+        let pairs = vec![(loc(0, 0), loc(1, 0))];
+        assert!(!connection_pair_exists(&pairs, &loc(0, 1), &loc(1, 0)));
+        assert!(!connection_pair_exists(&pairs, &loc(2, 0), &loc(3, 0)));
+    }
+
+    #[test]
+    fn returns_false_for_empty_pairs() {
+        assert!(!connection_pair_exists(&[], &loc(0, 0), &loc(1, 0)));
+    }
+
+    #[test]
+    fn finds_match_in_multi_element_list() {
+        let pairs = vec![
+            (loc(0, 0), loc(1, 0)),
+            (loc(0, 1), loc(1, 1)),
+            (loc(1, 0), loc(2, 0)),
+        ];
+        assert!(connection_pair_exists(&pairs, &loc(1, 0), &loc(2, 0)));
+        assert!(!connection_pair_exists(&pairs, &loc(0, 0), &loc(2, 0)));
+    }
+}
