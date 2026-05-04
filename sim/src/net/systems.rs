@@ -2,14 +2,15 @@ use bevy::{
     camera::{visibility::RenderLayers, RenderTarget},
     ecs::schedule::ScheduleLabel,
     prelude::*,
-    window::WindowRef,
+    window::{WindowClosed, WindowRef},
 };
 use bevy_egui::{
     egui::{self, Pos2},
-    EguiContext, EguiMultipassSchedule, PrimaryEguiContext,
+    EguiContext, EguiMultipassSchedule,
 };
 use bevy_vector_shapes::prelude::*;
-use engine::nn::{GraphLocation, Net};
+use engine::{nn::{GraphLocation, Net, Node}, NeuronInfo};
+use super::resources::InspectorCamera;
 
 use super::resources::*;
 
@@ -40,12 +41,32 @@ pub fn setup(mut commands: Commands) {
         RenderTarget::Window(WindowRef::Entity(inspect_net_window)),
         EguiMultipassSchedule::new(InspectWindowContextPass),
         render_layer,
+        InspectorCamera,
     ));
     commands.insert_resource(InspectorWindowId(inspect_net_window));
 }
 
-pub fn exit_inspector(mut commands: Commands, inspector_window_id: Res<InspectorWindowId>) {
+pub fn exit_inspector(
+    mut commands: Commands,
+    inspector_window_id: Res<InspectorWindowId>,
+    cameras: Query<Entity, With<InspectorCamera>>,
+) {
     commands.entity(inspector_window_id.0).despawn();
+    for cam in &cameras {
+        commands.entity(cam).despawn();
+    }
+}
+
+pub fn on_inspector_closed(
+    mut events: MessageReader<WindowClosed>,
+    inspector_window_id: Res<InspectorWindowId>,
+    mut next_inspect_state: ResMut<NextState<InspectWindowState>>,
+) {
+    for event in events.read() {
+        if event.window == inspector_window_id.0 {
+            next_inspect_state.set(InspectWindowState::None);
+        }
+    }
 }
 
 pub fn get_inspect_net(
@@ -81,6 +102,30 @@ fn y_pos(node: usize) -> f32 {
     ((CIRCLE_RADIUS * 2.0) + SPACING) * node as f32
 }
 
+fn node_color(node: &Node) -> Color {
+    match node {
+        Node::Input(_) => Color::from(Srgba::hex("17c3b2").unwrap()),  // teal
+        Node::Output(_) => Color::from(Srgba::hex("fe6d73").unwrap()), // coral
+        Node::Neuron(_) => Color::from(Srgba::hex("c77dff").unwrap()), // purple
+        Node::None => Color::from(Srgba::hex("888888").unwrap()),
+    }
+}
+
+fn edge_color_and_thickness(weight: f32) -> (Color, f32) {
+    let magnitude = weight.abs().min(3.0) / 3.0; // 0..1
+    let thickness = 1.0 + magnitude * 5.0;        // 1..6
+    let color = if weight >= 0.0 {
+        // positive: pale blue → vivid blue
+        let g = 0.6 - magnitude * 0.4;
+        Color::from(Srgba::new(0.1, g, 0.9 + magnitude * 0.1, 0.4 + magnitude * 0.6))
+    } else {
+        // negative: pale red → vivid red
+        let gb = 0.6 - magnitude * 0.5;
+        Color::from(Srgba::new(0.9 + magnitude * 0.1, gb, gb * 0.5, 0.4 + magnitude * 0.6))
+    };
+    (color, thickness)
+}
+
 pub fn draw_neural_net(
     net: Net,
     circles: &Query<Entity, (With<DiscComponent>, With<InspectWindow>)>,
@@ -99,77 +144,108 @@ pub fn draw_neural_net(
     let render_layer = RenderLayers::layer(1);
     let mut nodes = Vec::new();
 
-    shapes.color = Color::from(Srgba::hex("1b1b1b").unwrap());
-    for (num, layer) in net.graph.layers.iter().enumerate() {
-        let count = layer.iter().count();
+    // Precompute layer positions
+    let layer_positions: Vec<(f32, f32, usize)> = net.graph.layers.iter().enumerate().map(|(num, layer)| {
+        let count = layer.len();
         let start_x = (-1.0 * dims.0 / 3.0) + ((CIRCLE_RADIUS * 2.0) + SPACING) * num as f32;
-        let start_y = -1.0
-            * (((CIRCLE_RADIUS * 2.0 * count as f32) + (SPACING * (count as f32 - 1.0))) / 2.0);
+        let start_y = -1.0 * (((CIRCLE_RADIUS * 2.0 * count as f32) + (SPACING * (count as f32 - 1.0))) / 2.0);
+        (start_x, start_y, count)
+    }).collect();
+
+    // Pass 1: edges (drawn at Z=-1, behind nodes)
+    for (num, layer) in net.graph.layers.iter().enumerate() {
+        let (start_x, start_y, _) = layer_positions[num];
         for (node_num, node) in layer.iter().enumerate() {
-            shapes.transform =
-                Transform::from_xyz(start_x + x_pos(num), start_y + y_pos(node_num), 0.0);
+            let from = Vec3::new(start_x + x_pos(num), start_y + y_pos(node_num), -1.0);
+            for c in node.connections.iter() {
+                let to_idx = c.to.layer as usize;
+                if to_idx >= layer_positions.len() {
+                    continue;
+                }
+                let (to_sx, to_sy, _) = layer_positions[to_idx];
+                let to = Vec3::new(
+                    to_sx + x_pos(to_idx),
+                    to_sy + y_pos(c.to.node as usize),
+                    -1.0,
+                );
+                if c.value.enabled {
+                    let (color, thickness) = edge_color_and_thickness(c.value.weight);
+                    shapes.color = color;
+                    shapes.thickness = thickness;
+                } else {
+                    shapes.color = Color::from(Srgba::new(0.5, 0.5, 0.5, 0.3));
+                    shapes.thickness = 0.5;
+                }
+                commands.spawn((
+                    ShapeBundle::line(shapes.config(), from, to),
+                    InspectWindow,
+                    render_layer.clone(),
+                ));
+            }
+        }
+    }
+
+    // Pass 2: nodes (at Z=0, in front of edges)
+    shapes.thickness = 0.0;
+    for (num, layer) in net.graph.layers.iter().enumerate() {
+        let (start_x, start_y, _) = layer_positions[num];
+        for (node_num, node) in layer.iter().enumerate() {
+            let wx = start_x + x_pos(num);
+            let wy = start_y + y_pos(node_num);
             nodes.push((
-                GraphLocation {
-                    layer: num as u16,
-                    node: node_num as u16,
-                },
-                NodePosition {
-                    x: start_x + x_pos(num),
-                    y: start_y + y_pos(node_num),
-                },
+                GraphLocation { layer: num as u16, node: node_num as u16 },
+                NodePosition { x: wx, y: wy },
             ));
+            shapes.color = node_color(&node.value);
+            shapes.transform = Transform::from_xyz(wx, wy, 0.0);
             commands.spawn((
                 ShapeBundle::circle(shapes.config(), CIRCLE_RADIUS),
                 InspectWindow,
                 render_layer.clone(),
             ));
-
-            for c in node.connections.iter() {
-                let to_x =
-                    (-1.0 * dims.0 / 3.0) + ((CIRCLE_RADIUS * 2.0) + SPACING) * c.to.layer as f32;
-                let to_layer_count = net
-                    .graph
-                    .layers
-                    .iter()
-                    .skip(c.to.layer as usize)
-                    .next()
-                    .unwrap()
-                    .len();
-                let to_y: f32 = -1.0
-                    * (((CIRCLE_RADIUS * 2.0 * to_layer_count as f32)
-                        + (SPACING * (to_layer_count as f32 - 1.0)))
-                        / 2.0);
-
-                if c.value.enabled {
-                    shapes.color = Color::from(Srgba::hex("1b1b1b").unwrap());
-                } else {
-                    shapes.color = Color::from(Srgba::hex("808080").unwrap());
-                }
-
-                shapes.thickness = 5.0;
-                shapes.set_translation(Vec3::NEG_Z);
-                commands.spawn((
-                    ShapeBundle::line(
-                        shapes.config(),
-                        Vec3::new(start_x + x_pos(num), start_y + y_pos(node_num), -1.0),
-                        Vec3::new(
-                            to_x + x_pos(c.to.layer as usize),
-                            to_y + y_pos(c.to.node as usize),
-                            -1.0,
-                        ),
-                    ),
-                    InspectWindow,
-                    render_layer.clone(),
-                ));
-                shapes.thickness = 0.0;
-                shapes.color = Color::from(Srgba::hex("1b1b1b").unwrap());
-            }
         }
     }
 
-    Nn {
-        net,
-        node_positions: nodes,
+    Nn { net, node_positions: nodes }
+}
+
+pub fn draw_node_labels(
+    mut egui_ctx: Single<&mut EguiContext, With<InspectorCamera>>,
+    nn: Res<Nn>,
+    window: Query<&Window, With<InspectWindow>>,
+) {
+    let Ok(w) = window.single() else { return };
+    let dims = (w.width(), w.height());
+    let ctx = egui_ctx.get_mut();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("nn_labels"),
+    ));
+
+    for (loc, pos) in &nn.node_positions {
+        let screen_x = pos.x + dims.0 / 2.0;
+        let screen_y = dims.1 / 2.0 - pos.y;
+
+        let node = nn.net.graph.get_node(loc);
+        let label = match &node {
+            Some(n) => n.value.label().to_string(),
+            None => continue,
+        };
+
+        let color = match &node.unwrap().value {
+            Node::Input(_) => egui::Color32::from_rgb(0x17, 0xc3, 0xb2),
+            Node::Output(_) => egui::Color32::from_rgb(0xfe, 0x6d, 0x73),
+            Node::Neuron(_) => egui::Color32::from_rgb(0xc7, 0x7d, 0xff),
+            Node::None => egui::Color32::GRAY,
+        };
+
+        painter.text(
+            egui::pos2(screen_x, screen_y - CIRCLE_RADIUS - 3.0),
+            egui::Align2::CENTER_BOTTOM,
+            &label,
+            egui::FontId::proportional(11.0),
+            color,
+        );
     }
 }
 
@@ -306,15 +382,19 @@ pub fn toggle_inspect_window(
 }
 
 pub fn inspect_window(
-    mut egui_ctx: Single<&mut EguiContext, Without<PrimaryEguiContext>>,
+    mut egui_ctx: Single<&mut EguiContext, With<InspectorCamera>>,
     inspect_info: Res<InspectInfo>,
     mut window_state: ResMut<WindowInfo>,
 ) {
     let egui_ctx = egui_ctx.get_mut();
     let mut style = (*egui_ctx.style()).clone();
 
+    *style.text_styles.get_mut(&egui::TextStyle::Body).unwrap() =
+        egui::FontId::new(14.0, egui::FontFamily::Proportional);
+    egui_ctx.set_style(style);
+
     let window = egui::Window::new(format!(
-        "Layer {} Node {}",
+        "Node [{}, {}]",
         inspect_info.0 .0.layer, inspect_info.0 .0.node
     ))
     .default_pos(Pos2::new(
@@ -322,12 +402,28 @@ pub fn inspect_window(
         window_state.inspect_window_pos.1,
     ))
     .show(egui_ctx, |ui| {
-        ui.horizontal(|ui| {
-            *style.text_styles.get_mut(&egui::TextStyle::Body).unwrap() =
-                egui::FontId::new(20.0, egui::FontFamily::Proportional);
-            ui.set_style(style);
-            ui.label(format!("{:#?}", inspect_info.0 .1));
-        });
+        let node = &inspect_info.0 .1;
+        match &node.value {
+            Node::Input(n) => {
+                ui.colored_label(egui::Color32::from_rgb(0x17, 0xc3, 0xb2), format!("Input: {}", n.label()));
+                ui.label(format!("Value: {:.4}", n.as_standard()));
+            }
+            Node::Output(n) => {
+                ui.colored_label(egui::Color32::from_rgb(0xfe, 0x6d, 0x73), format!("Output: {}", n.label()));
+                ui.label(format!("Activation: {:.4}", n.value()));
+            }
+            Node::Neuron(n) => {
+                ui.colored_label(egui::Color32::from_rgb(0xc7, 0x7d, 0xff), format!("Neuron: {}", n.label()));
+            }
+            Node::None => { ui.label("None"); }
+        }
+
+        ui.separator();
+        ui.label(format!("Connections: {}", node.connections.len()));
+        for c in &node.connections {
+            let status = if c.value.enabled { "✓" } else { "✗" };
+            ui.label(format!("  {} → [{},{}]  w={:.3}", status, c.to.layer, c.to.node, c.value.weight));
+        }
     })
     .unwrap();
 

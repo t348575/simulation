@@ -5,6 +5,16 @@ use egui_file::FileDialog;
 use engine::nn::{GraphLocation, GraphNode, Net};
 use serde::{Deserialize, Serialize};
 
+#[derive(Component)]
+pub struct InspectorCamera;
+
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum InspectWindowState {
+    #[default]
+    None,
+    Display,
+}
+
 #[derive(Resource, Debug)]
 pub struct InspectorWindowId(pub Entity);
 

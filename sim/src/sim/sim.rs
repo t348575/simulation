@@ -1,4 +1,4 @@
-use std::{thread::sleep, time::Duration};
+use std::{collections::HashSet, thread::sleep, time::Duration};
 
 use bevy::math::Vec2;
 use dashmap::DashMap;
@@ -10,38 +10,10 @@ use flume::{unbounded, Receiver, Sender};
 use rand::Rng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use super::resources::{SimulationConfig, SimulationStats};
 
 pub const CREATURE_DIM: f32 = 5.0;
 pub const CREATURE_DIM_HALF: f32 = CREATURE_DIM / 2.0;
-const MIN_CREATURE_SIZE: f32 = 3.0;
-const MAX_CREATURE_SIZE: f32 = 14.0;
-const MIN_FOOD_SIZE: f32 = 2.0;
-const MAX_FOOD_SIZE: f32 = 10.0;
-const FOOD_ENERGY_PER_SIZE: f32 = 7.0;
-const FOOD_EAT_TICKS_PER_SIZE: f32 = 4.0;
-const MATE_THRESHOLD: f32 = 0.5;
-const MATE_COOLDOWN_TICKS: u16 = 120;
-const MAX_BIRTHS_PER_TICK: usize = 10;
-const START_ENERGY: f32 = 80.0;
-const MAX_ENERGY: f32 = 120.0;
-const BASE_ENERGY_COST: f32 = 0.02;
-const MOVE_ENERGY_COST: f32 = 0.08;
-const MIN_MOVE_ENERGY: f32 = 5.0;
-const FULL_SPEED_ENERGY: f32 = 45.0;
-const MATE_ATTEMPT_COST: f32 = 0.03;
-const EAT_ATTEMPT_COST: f32 = 0.02;
-const EAT_ACTION_COST: f32 = 0.5;
-const EAT_ACTION_BASE_TICKS: u16 = 8;
-const MATE_ACTION_TICKS: u16 = 60;
-const POISON_DAMAGE: f32 = 45.0;
-const MATE_ENERGY_COST: f32 = 25.0;
-const MIN_MATE_ENERGY: f32 = 55.0;
-const CHILD_ENERGY: f32 = 45.0;
-const MAX_AGE: u32 = 8_000;
-const FOOD_PER_CREATURE: usize = 4;
-const POISON_PER_CREATURE: usize = 12;
-const MUTATION_RATE: f32 = 0.05;
-const MUTATION_AMOUNT: f32 = 0.35;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Simulation {
@@ -54,6 +26,11 @@ struct Simulation {
     target_population: usize,
     input_nodes: Vec<Node>,
     output_nodes: Vec<Node>,
+    previous_ids: HashSet<usize>,
+    total_spawned: usize,
+    config: SimulationConfig,
+    food_eaten_this_tick: usize,
+    total_food_eaten: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -190,6 +167,7 @@ pub enum RunnerReq {
     Resume,
     Pause,
     GetNet(usize),
+    UpdateConfig(SimulationConfig),
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +181,7 @@ pub struct Positions {
     pub creatures: Vec<BasicCreature>,
     pub food: Vec<BasicFood>,
     pub poison: Vec<(f32, f32)>,
+    pub stats: SimulationStats,
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +190,7 @@ pub struct Generate {
     pub input_nodes: Vec<Node>,
     pub output_nodes: Vec<Node>,
     pub dims: (f32, f32),
+    pub config: SimulationConfig,
 }
 
 impl Runner {
@@ -239,6 +219,7 @@ impl Runner {
                         self.sim.target_population = g.num_creatures;
                         self.sim.input_nodes = g.input_nodes;
                         self.sim.output_nodes = g.output_nodes;
+                        self.sim.config = g.config;
 
                         // Seed ~12% of the initial population with hand-crafted brains so
                         // the world never stalls while purely random creatures find their footing.
@@ -271,7 +252,7 @@ impl Runner {
                                             rng.gen_range(0.0..width),
                                             rng.gen_range(0.0..height),
                                         ),
-                                        energy: START_ENERGY,
+                                        energy: self.sim.config.start_energy,
                                         age: 0,
                                         mate_cooldown: 0,
                                         action_lock: 0,
@@ -282,6 +263,8 @@ impl Runner {
                                 (self.sim.last_id, creature)
                             })
                             .collect();
+                        self.sim.total_spawned = g.num_creatures;
+                        self.sim.previous_ids = self.sim.creatures.iter().map(|c| *c.key()).collect();
                         self.sim.refill_food_and_poison(&mut rng);
                         self.tx
                             .send(RunnerRes::Positions(self.positions()))
@@ -296,6 +279,9 @@ impl Runner {
                         }
                         .expect("Could not send net")
                     }
+                    RunnerReq::UpdateConfig(config) => {
+                        self.sim.config = config;
+                    }
                 }
             }
 
@@ -306,6 +292,12 @@ impl Runner {
 
             self.sim.run();
             self.sim.ticks += 1;
+
+            // Update stats tracking
+            let current_ids: HashSet<usize> = self.sim.creatures.iter().map(|c| *c.key()).collect();
+            self.sim.total_spawned += current_ids.difference(&self.sim.previous_ids).count();
+            self.sim.previous_ids = current_ids;
+
             if self.tx.len() == 0 {
                 _ = self.tx.send(RunnerRes::Positions(self.positions()));
             }
@@ -313,17 +305,59 @@ impl Runner {
     }
 
     fn positions(&self) -> Positions {
-        Positions {
-            creatures: self
+        let creatures: Vec<BasicCreature> = self
+            .sim
+            .creatures
+            .par_iter()
+            .map(|x| BasicCreature {
+                position: x.value().position,
+                id: *x.key(),
+                size: creature_size(x.value().energy, &self.sim.config),
+            })
+            .collect();
+
+        let current_ids: HashSet<usize> = creatures.iter().map(|c| c.id).collect();
+        let births = current_ids.difference(&self.sim.previous_ids).count();
+        let deaths = self.sim.previous_ids.difference(&current_ids).count();
+
+            let (total_energy, total_age, total_size) = self
                 .sim
                 .creatures
-                .par_iter()
-                .map(|x| BasicCreature {
-                    position: x.value().position,
-                    id: *x.key(),
-                    size: creature_size(x.value().energy),
-                })
-                .collect(),
+                .iter()
+                .fold((0.0f32, 0u32, 0.0f32), |acc, c| {
+                    let creature = c.value();
+                    (
+                        acc.0 + creature.energy,
+                        acc.1 + creature.age,
+                        acc.2 + creature_size(creature.energy, &self.sim.config),
+                    )
+                });
+
+        let count = self.sim.creatures.len();
+        let avg_energy = if count > 0 {
+            total_energy / count as f32
+        } else {
+            0.0
+        };
+        let avg_age = if count > 0 {
+            total_age as f32 / count as f32
+        } else {
+            0.0
+        };
+        let avg_size = if count > 0 {
+            total_size / count as f32
+        } else {
+            0.0
+        };
+
+        let survival_rate = if self.sim.total_spawned > 0 {
+            self.sim.creatures.len() as f32 / self.sim.total_spawned as f32
+        } else {
+            0.0
+        };
+
+        Positions {
+            creatures,
             food: self
                 .sim
                 .food
@@ -334,6 +368,22 @@ impl Runner {
                 })
                 .collect(),
             poison: self.sim.poison.clone(),
+            stats: SimulationStats {
+                current_population: self.sim.creatures.len(),
+                target_population: self.sim.target_population,
+                births_this_tick: births,
+                deaths_this_tick: deaths,
+                total_spawned: self.sim.total_spawned,
+                avg_energy,
+                avg_age,
+                avg_size,
+                food_count: self.sim.food.len(),
+                poison_count: self.sim.poison.len(),
+                survival_rate,
+                selected_creature_id: None,
+                food_eaten_this_tick: self.sim.food_eaten_this_tick,
+                total_food_eaten: self.sim.total_food_eaten,
+            },
         }
     }
 }
@@ -387,13 +437,19 @@ fn do_sized_squares_collide(a: (f32, f32), a_size: f32, b: (f32, f32), b_size: f
     a_min_x < b_max_x && a_max_x > b_min_x && a_min_y < b_max_y && a_max_y > b_min_y
 }
 
-fn creature_size(energy: f32) -> f32 {
-    MIN_CREATURE_SIZE
-        + (energy / MAX_ENERGY).clamp(0.0, 1.0) * (MAX_CREATURE_SIZE - MIN_CREATURE_SIZE)
+fn creature_size(energy: f32, config: &SimulationConfig) -> f32 {
+    config.min_creature_size
+        + (energy / config.max_energy).clamp(0.0, 1.0) * (config.max_creature_size - config.min_creature_size)
 }
 
 fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
-    ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
+    distance_sq(a, b).sqrt()
+}
+
+fn distance_sq(a: (f32, f32), b: (f32, f32)) -> f32 {
+    let dx = a.0 - b.0;
+    let dy = a.1 - b.1;
+    dx * dx + dy * dy
 }
 
 fn set_input(inputs: &mut [engine::nn::GraphNode], idx: usize, value: f32) {
@@ -404,10 +460,17 @@ fn set_input(inputs: &mut [engine::nn::GraphNode], idx: usize, value: f32) {
     }
 }
 
-fn nearest_signal(from: (f32, f32), targets: &[(f32, f32)], dims: (f32, f32)) -> (f32, f32, f32) {
-    let Some(target) = targets
-        .iter()
-        .min_by(|a, b| distance(from, **a).total_cmp(&distance(from, **b)))
+fn speed_cap_for_energy(energy: f32, config: &SimulationConfig) -> f32 {
+    ((energy - config.min_move_energy) / (config.full_speed_energy - config.min_move_energy))
+        .clamp(0.0, 1.0)
+}
+
+fn nearest_signal(
+    from: (f32, f32),
+    targets: impl Iterator<Item = (f32, f32)>,
+    dims: (f32, f32),
+) -> (f32, f32, f32) {
+    let Some(target) = targets.min_by(|a, b| distance_sq(from, *a).total_cmp(&distance_sq(from, *b)))
     else {
         return (0.0, 0.0, 1.0);
     };
@@ -418,16 +481,13 @@ fn nearest_signal(from: (f32, f32), targets: &[(f32, f32)], dims: (f32, f32)) ->
     (
         dx / dims.0.max(1.0),
         dy / dims.1.max(1.0),
-        distance(from, *target) / diagonal,
+        distance(from, target) / diagonal,
     )
-}
-
-fn speed_cap_for_energy(energy: f32) -> f32 {
-    ((energy - MIN_MOVE_ENERGY) / (FULL_SPEED_ENERGY - MIN_MOVE_ENERGY)).clamp(0.0, 1.0)
 }
 
 impl Simulation {
     fn run(&mut self) {
+        self.food_eaten_this_tick = 0;
         let food_snapshot = self.food.clone();
         let poison_snapshot = self.poison.clone();
         let mate_snapshot = self
@@ -438,8 +498,8 @@ impl Simulation {
                 let output_layer =
                     &creature.brain.graph.layers[creature.brain.graph.layers.len() - 1];
                 (creature.mate_cooldown == 0
-                    && creature.energy >= MIN_MATE_ENERGY
-                    && get_output_value(&output_layer[5].value) > MATE_THRESHOLD)
+                    && creature.energy >= self.config.min_mate_energy
+                    && get_output_value(&output_layer[5].value) > self.config.mate_threshold)
                     .then_some((*c.key(), creature.position))
             })
             .collect::<Vec<_>>();
@@ -451,34 +511,26 @@ impl Simulation {
             c.mate_cooldown = c.mate_cooldown.saturating_sub(1);
             c.action_lock = c.action_lock.saturating_sub(1);
             c.age += 1;
-            let speed = c.brain.graph.layers[c.brain.graph.layers.len() - 1][4]
-                .value
-                .clone();
+            let prev_speed = get_output_value(
+                &c.brain.graph.layers[c.brain.graph.layers.len() - 1][4].value,
+            );
             let inputs = &mut c.brain.graph.layers[c.brain.input_layer as usize];
-            let food_positions = food_snapshot
-                .iter()
-                .map(|food| food.position)
-                .collect::<Vec<_>>();
-            let (food_dx, food_dy, food_dist) = nearest_signal(c.position, &food_positions, dims);
+            let (food_dx, food_dy, food_dist) =
+                nearest_signal(c.position, food_snapshot.iter().map(|food| food.position), dims);
             let mate_targets = mate_snapshot
                 .iter()
-                .filter_map(|(mate_id, position)| (*mate_id != id).then_some(*position))
-                .collect::<Vec<_>>();
-            let (mate_dx, mate_dy, mate_dist) = nearest_signal(c.position, &mate_targets, dims);
+                .filter_map(|(mate_id, position)| (*mate_id != id).then_some(*position));
+            let (mate_dx, mate_dy, mate_dist) = nearest_signal(c.position, mate_targets, dims);
             let (poison_dx, poison_dy, poison_dist) =
-                nearest_signal(c.position, &poison_snapshot, dims);
+                nearest_signal(c.position, poison_snapshot.iter().copied(), dims);
 
-            set_input(inputs, 0, 1.0 - (c.energy / MAX_ENERGY).clamp(0.0, 1.0));
-            set_input(inputs, 1, c.age as f32 / MAX_AGE as f32);
-            set_input(inputs, 2, (c.energy / MAX_ENERGY).clamp(0.0, 1.0));
+            set_input(inputs, 0, 1.0 - (c.energy / self.config.max_energy).clamp(0.0, 1.0));
+            set_input(inputs, 1, c.age as f32 / self.config.max_age as f32);
+            set_input(inputs, 2, (c.energy / self.config.max_energy).clamp(0.0, 1.0));
             set_input(
                 inputs,
                 3,
-                if let Node::Output(o) = speed {
-                    o.value()
-                } else {
-                    0.0
-                },
+                prev_speed,
             );
             set_input(inputs, 4, food_dx);
             set_input(inputs, 5, food_dy);
@@ -512,7 +564,7 @@ impl Simulation {
 
             let movement_vec = dirs_to_vec(forward, backward, left, right);
             let speed = if c.action_lock == 0 {
-                get_output_value(&output_layer[4].value).min(speed_cap_for_energy(c.energy))
+                get_output_value(&output_layer[4].value).min(speed_cap_for_energy(c.energy, &self.config))
             } else {
                 0.0
             };
@@ -520,10 +572,10 @@ impl Simulation {
             let eat = get_output_value(&output_layer[6].value);
 
             let t = movement_vec * speed; // add time diff here if needed
-            c.energy -= BASE_ENERGY_COST
-                + (speed * MOVE_ENERGY_COST)
-                + (mate * MATE_ATTEMPT_COST)
-                + (eat * EAT_ATTEMPT_COST);
+            c.energy -= self.config.base_energy_cost
+                + (speed * self.config.move_energy_cost)
+                + (mate * self.config.mate_attempt_cost)
+                + (eat * self.config.eat_attempt_cost);
 
             let next_position = (c.position.0 + t.x, c.position.1 + t.y);
             if next_position.0 >= 0.0
@@ -541,11 +593,11 @@ impl Simulation {
         self.mate_creatures();
 
         self.creatures
-            .retain(|_, creature| creature.energy > 0.0 && creature.age <= MAX_AGE);
+            .retain(|_, creature| creature.energy > 0.0 && creature.age <= self.config.max_age);
 
         self.food.retain(|f| {
             let Some(mut accessor) = self.creatures.iter_mut().find(|x| {
-                do_sized_squares_collide(x.position, creature_size(x.energy), f.position, f.size)
+                do_sized_squares_collide(x.position, creature_size(x.energy, &self.config), f.position, f.size)
             }) else {
                 return true;
             };
@@ -555,19 +607,21 @@ impl Simulation {
             if get_output_value(&output_layer[6].value) <= 0.5 {
                 return true;
             }
-            if c_meet.action_lock != 0 || creature_size(c_meet.energy) < f.size {
+            if c_meet.action_lock != 0 || creature_size(c_meet.energy, &self.config) < f.size {
                 return true;
             }
 
             let c_meet = accessor.value_mut();
-            c_meet.energy -= EAT_ACTION_COST;
-            c_meet.action_lock = EAT_ACTION_BASE_TICKS + (f.size * FOOD_EAT_TICKS_PER_SIZE) as u16;
+            c_meet.energy -= self.config.eat_action_cost;
+            c_meet.action_lock = self.config.eat_action_base_ticks + (f.size * self.config.food_eat_ticks_per_size) as u16;
+            self.food_eaten_this_tick += 1;
+            self.total_food_eaten += 1;
             if let Node::Input(n) = &mut c_meet.brain.graph.layers[0][0].value {
                 let v = n.as_standard() - 1.0;
                 n.set_value(if v < 0.0 { 0.0 } else { v });
             }
 
-            c_meet.energy = (c_meet.energy + f.size * FOOD_ENERGY_PER_SIZE).min(MAX_ENERGY);
+            c_meet.energy = (c_meet.energy + f.size * self.config.food_energy_per_size).min(self.config.max_energy);
 
             if let Node::Input(n) = &mut c_meet.brain.graph.layers[0][3].value {
                 n.set_value(0.0);
@@ -585,16 +639,18 @@ impl Simulation {
                 return true;
             };
 
-            accessor.value_mut().energy -= POISON_DAMAGE;
+            accessor.value_mut().energy -= self.config.poison_damage;
             false
         });
 
         let mut rng = rand::thread_rng();
         self.refill_food_and_poison(&mut rng);
-        while self.creatures.len() < self.target_population {
-            self.last_id += 1;
-            let creature = self.random_creature(&mut rng, self.world_dim);
-            self.creatures.insert(self.last_id, creature);
+        if self.config.creature_spawning_enabled {
+            while self.creatures.len() < self.target_population {
+                self.last_id += 1;
+                let creature = self.random_creature(&mut rng, self.world_dim);
+                self.creatures.insert(self.last_id, creature);
+            }
         }
     }
 
@@ -614,13 +670,13 @@ impl Simulation {
                 if creature.mate_cooldown != 0 {
                     return None;
                 }
-                if creature.energy < MIN_MATE_ENERGY {
+                if creature.energy < self.config.min_mate_energy {
                     return None;
                 }
 
                 let output_layer =
                     &creature.brain.graph.layers[creature.brain.graph.layers.len() - 1];
-                if get_output_value(&output_layer[5].value) <= MATE_THRESHOLD {
+                if get_output_value(&output_layer[5].value) <= self.config.mate_threshold {
                     return None;
                 }
 
@@ -649,7 +705,7 @@ impl Simulation {
             let Some(b) = self.creatures.get(b_id) else {
                 continue;
             };
-            if a.energy < MIN_MATE_ENERGY || b.energy < MIN_MATE_ENERGY {
+            if a.energy < self.config.min_mate_energy || b.energy < self.config.min_mate_energy {
                 continue;
             }
             if a.action_lock != 0 || b.action_lock != 0 {
@@ -663,7 +719,7 @@ impl Simulation {
                 DefaultIterator::new(),
             )
             .unwrap_or_else(|_| a.brain.clone());
-            Self::mutate_child_brain(&mut child_brain);
+            Self::mutate_child_brain(&mut child_brain, &self.config);
 
             births.push((
                 *a_id,
@@ -674,16 +730,16 @@ impl Simulation {
                         ((a_position.0 + b_position.0) / 2.0).clamp(0.0, self.world_dim.0),
                         ((a_position.1 + b_position.1) / 2.0).clamp(0.0, self.world_dim.1),
                     ),
-                    energy: CHILD_ENERGY,
+                    energy: self.config.child_energy,
                     age: 0,
-                    mate_cooldown: MATE_COOLDOWN_TICKS,
-                    action_lock: MATE_ACTION_TICKS,
+                    mate_cooldown: self.config.mate_cooldown_ticks,
+                    action_lock: self.config.eat_action_base_ticks,
                 },
             ));
             used_parents.push(*a_id);
             used_parents.push(*b_id);
 
-            if births.len() >= MAX_BIRTHS_PER_TICK {
+            if births.len() >= self.config.max_births_per_tick {
                 break;
             }
             if self.creatures.len() + births.len() >= self.target_population * 2 {
@@ -693,14 +749,14 @@ impl Simulation {
 
         for (a_id, b_id, child) in births {
             if let Some(mut a) = self.creatures.get_mut(&a_id) {
-                a.energy -= MATE_ENERGY_COST;
-                a.mate_cooldown = MATE_COOLDOWN_TICKS;
-                a.action_lock = MATE_ACTION_TICKS;
+                a.energy -= self.config.mate_energy_cost;
+                a.mate_cooldown = self.config.mate_cooldown_ticks;
+                a.action_lock = self.config.eat_action_base_ticks;
             }
             if let Some(mut b) = self.creatures.get_mut(&b_id) {
-                b.energy -= MATE_ENERGY_COST;
-                b.mate_cooldown = MATE_COOLDOWN_TICKS;
-                b.action_lock = MATE_ACTION_TICKS;
+                b.energy -= self.config.mate_energy_cost;
+                b.mate_cooldown = self.config.mate_cooldown_ticks;
+                b.action_lock = self.config.eat_action_base_ticks;
             }
 
             self.last_id += 1;
@@ -712,7 +768,7 @@ impl Simulation {
         Creature {
             brain: Net::gen(&self.input_nodes, &self.output_nodes).unwrap(),
             position: (rng.gen_range(0.0..dims.0), rng.gen_range(0.0..dims.1)),
-            energy: START_ENERGY,
+            energy: self.config.start_energy,
             age: 0,
             mate_cooldown: 0,
             action_lock: 0,
@@ -720,15 +776,17 @@ impl Simulation {
     }
 
     fn refill_food_and_poison(&mut self, rng: &mut impl Rng) {
-        let food_target = (self.target_population / FOOD_PER_CREATURE).max(1);
-        let poison_target = (self.target_population / POISON_PER_CREATURE).max(1);
+        let food_target = ((self.target_population as f32 * self.config.food_spawn_multiplier) as usize
+            / self.config.food_per_creature)
+            .max(1);
+        let poison_target = (self.target_population / self.config.poison_per_creature).max(1);
         while self.food.len() < food_target {
             self.food.push(Food {
                 position: (
                     rng.gen_range(0.0..self.world_dim.0),
                     rng.gen_range(0.0..self.world_dim.1),
                 ),
-                size: rng.gen_range(MIN_FOOD_SIZE..=MAX_FOOD_SIZE),
+                size: rng.gen_range(self.config.min_food_size..=self.config.max_food_size),
             });
         }
         while self.poison.len() < poison_target {
@@ -739,15 +797,15 @@ impl Simulation {
         }
     }
 
-    fn mutate_child_brain(net: &mut Net) {
+    fn mutate_child_brain(net: &mut Net, config: &SimulationConfig) {
         let mut rng = rand::thread_rng();
         for layer in &mut net.graph.layers {
             for node in layer {
                 for edge in &mut node.connections {
-                    if rng.gen::<f32>() < MUTATION_RATE {
-                        edge.value.weight += rng.gen_range(-MUTATION_AMOUNT..MUTATION_AMOUNT);
+                    if rng.gen::<f32>() < config.mutation_rate {
+                        edge.value.weight += rng.gen_range(-config.mutation_amount..config.mutation_amount);
                     }
-                    if rng.gen::<f32>() < MUTATION_RATE / 4.0 {
+                    if rng.gen::<f32>() < config.mutation_rate / 4.0 {
                         edge.value.enabled = !edge.value.enabled;
                     }
                 }

@@ -1,24 +1,25 @@
 use bevy::{prelude::*, window::WindowClosed};
-use bevy_egui::{egui, EguiContexts};
+use bevy::ecs::system::Single;
+use bevy_egui::{egui, EguiContext, PrimaryEguiContext};
 
 use crate::{InspectWindowState, TabState};
 
 pub fn main_menu(
-    mut egui_ctx: EguiContexts,
+    mut egui_ctx: Single<&mut EguiContext, With<PrimaryEguiContext>>,
     mut next_tab_state: ResMut<NextState<TabState>>,
     mut next_inspector_state: ResMut<NextState<InspectWindowState>>,
     inspector_state: Res<State<InspectWindowState>>,
 ) {
-    let egui_ctx = egui_ctx.ctx_mut().unwrap();
+    let ctx = egui_ctx.get_mut();
     egui::Window::new("Main Menu")
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .resizable(false)
         .movable(false)
         .collapsible(false)
-        .show(egui_ctx, |ui| {
+        .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let button =
-                    ui.add_sized((ui.available_width(), 0.0), egui::Button::new("Simulation"));
+                    ui.add_sized((ui.available_width(), 40.0), egui::Button::new("Simulation"));
                 if button.clicked() {
                     next_tab_state.set(TabState::Simulation);
                 }
@@ -26,7 +27,7 @@ pub fn main_menu(
 
             ui.horizontal(|ui| {
                 let button = ui.add_sized(
-                    (ui.available_width(), 0.0),
+                    (ui.available_width(), 40.0),
                     egui::Button::new("Neural net viewer"),
                 );
                 if button.clicked() {

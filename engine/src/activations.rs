@@ -1,13 +1,10 @@
-use macros::{DNeuronInfo, SubTraits};
+use macros::SubTraits;
 use serde::{Deserialize, Serialize};
 use std::{f32::consts::E, fmt::Debug};
 
-use crate::{
-    nn::{Edge, NeuronSubTraits, OutputNeuron},
-    NeuronInfo,
-};
+use crate::nn::{Edge, NeuronSubTraits, OutputNeuron};
 
-#[derive(Debug, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
+#[derive(Debug, Serialize, Deserialize, Clone, SubTraits)]
 pub struct Sigmoid {
     value: f32,
     id: usize,
@@ -28,6 +25,20 @@ impl OutputNeuron for Sigmoid {
 
     fn value(&self) -> f32 {
         self.value
+    }
+}
+
+impl crate::NeuronInfo for Sigmoid {
+    fn _type(&self) -> &'static str {
+        "Sigmoid"
+    }
+
+    fn id(&self) -> usize {
+        self.id
+    }
+
+    fn label(&self) -> &str {
+        &self._type
     }
 }
 

@@ -1,34 +1,17 @@
 use bevy::{
-    camera::RenderTarget,
     prelude::*,
-    window::{PresentMode, WindowMode, WindowRef},
+    window::{ExitCondition, PresentMode, WindowMode},
 };
 use bevy_egui::EguiPlugin;
 use engine::{activations::Sigmoid, nn::Node};
 use inputs::*;
-use main_menu::MainMenuPlugin;
 use net::{resources::InspectNet, NeuralNetPlugin};
 use sim::SimulationPlugin;
 
 pub mod inputs;
-mod main_menu;
 mod net;
 pub mod outputs;
 mod sim;
-
-#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum TabState {
-    #[default]
-    MainMenu,
-    Simulation,
-}
-
-#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum InspectWindowState {
-    #[default]
-    None,
-    Display,
-}
 
 #[derive(Resource, Debug)]
 pub struct BaseNodes {
@@ -44,6 +27,7 @@ fn main() {
             mode: WindowMode::Windowed,
             ..default()
         }),
+        exit_condition: ExitCondition::OnPrimaryClosed,
         ..default()
     };
     window_plugin
@@ -84,22 +68,14 @@ fn main() {
 
     App::new()
         .add_plugins(DefaultPlugins.set(window_plugin))
-        .init_state::<TabState>()
-        .init_state::<InspectWindowState>()
         .add_message::<InspectNet>()
         .insert_resource(BaseNodes {
             input_nodes,
             output_nodes,
         })
-        .add_systems(Startup, setup)
         .add_plugins(EguiPlugin::default())
-        .add_plugins(MainMenuPlugin)
         .add_plugins(SimulationPlugin)
         .add_plugins(NeuralNetPlugin)
         .insert_resource(ClearColor(Color::WHITE))
         .run();
-}
-
-fn setup(mut commands: Commands) {
-    commands.spawn((Camera2d, RenderTarget::Window(WindowRef::Primary)));
 }

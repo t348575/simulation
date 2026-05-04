@@ -2,7 +2,6 @@ use std::fmt::Debug;
 
 use dyn_clone::{clone_trait_object, DynClone};
 use hashbrown::HashSet;
-use indexmap::IndexMap;
 use log::debug;
 use macros::{DNeuronInfo, SubTraits};
 use rand::{random, seq::IteratorRandom, Rng};
@@ -574,76 +573,60 @@ impl Net {
     }
 
     pub fn tick(&mut self) {
-        let mut next_layer_inputs: IndexMap<GraphSize, Vec<(GraphEdge, f32)>> = IndexMap::new();
-        let input_layer = self.graph.layers.first().unwrap();
-        for node in input_layer.iter() {
-            for c in node.connections.iter() {
-                if !c.value.enabled {
-                    continue;
-                }
+        let mut partials: Vec<Vec<f32>> = self
+            .graph
+            .layers
+            .iter()
+            .map(|layer| vec![0.0; layer.len()])
+            .collect();
+        let mut active: Vec<Vec<bool>> = self
+            .graph
+            .layers
+            .iter()
+            .map(|layer| vec![false; layer.len()])
+            .collect();
 
-                if let Node::Input(i) = &node.value {
-                    let entry = (c.clone(), i.as_standard());
-                    match next_layer_inputs.get_mut(&c.to.layer) {
-                        Some(s) => s.push(entry),
-                        None => {
-                            next_layer_inputs.insert(c.to.layer, vec![entry]);
-                        }
+        for layer_idx in 0..self.graph.layers.len() {
+            for node_idx in 0..self.graph.layers[layer_idx].len() {
+                let outgoing = if layer_idx == self.input_layer as usize {
+                    match &self.graph.layers[layer_idx][node_idx].value {
+                        Node::Input(input) => Some(input.as_standard()),
+                        _ => None,
                     }
-                }
-            }
-        }
-
-        while next_layer_inputs.len() != 0 {
-            next_layer_inputs.sort_keys();
-            let mut partials: Vec<(GraphLocation, f32)> = Vec::new();
-            let layer = {
-                let (got_layer, compute_step) = next_layer_inputs.first_mut().unwrap();
-                for (edge, input) in compute_step {
-                    let node = self.graph.get_node(&edge.to).unwrap();
-
-                    let ele = match partials.iter().position(|x| x.0.eq(&edge.to)) {
-                        Some(s) => &mut partials[s].1,
-                        None => {
-                            partials.push((edge.to.clone(), 0.0));
-                            &mut partials.last_mut().unwrap().1
+                } else if active[layer_idx][node_idx] {
+                    let partial = partials[layer_idx][node_idx];
+                    match &mut self.graph.layers[layer_idx][node_idx].value {
+                        Node::Output(output) => {
+                            output.finish_and_save(partial);
+                            None
                         }
-                    };
-                    match &node.value {
-                        Node::Output(o) => *ele += o.step(&edge.value, *input),
-                        Node::Neuron(n) => *ele += n.step(&edge.value, *input),
+                        Node::Neuron(neuron) => Some(neuron.finish(partial)),
                         _ => unreachable!(),
                     }
-                }
-                *got_layer
-            };
+                } else {
+                    None
+                };
 
-            for (node, partial) in partials {
-                let node = self.graph.get_node_mut(&node).unwrap();
-                match &mut node.value {
-                    Node::Output(o) => {
-                        o.finish_and_save(partial);
-                    }
-                    Node::Neuron(n) => {
-                        let step_value = n.finish(partial);
-                        for c in node.connections.iter() {
-                            if !c.value.enabled {
-                                continue;
-                            }
+                let Some(outgoing) = outgoing else {
+                    continue;
+                };
 
-                            let entry = (c.clone(), step_value);
-                            match next_layer_inputs.get_mut(&c.to.layer) {
-                                Some(s) => s.push(entry),
-                                None => {
-                                    next_layer_inputs.insert(c.to.layer, vec![entry]);
-                                }
-                            }
-                        }
+                for edge in &self.graph.layers[layer_idx][node_idx].connections {
+                    if !edge.value.enabled {
+                        continue;
                     }
-                    _ => unreachable!(),
+
+                    let to_layer = edge.to.layer as usize;
+                    let to_node = edge.to.node as usize;
+                    let contribution = match &self.graph.layers[to_layer][to_node].value {
+                        Node::Output(output) => output.step(&edge.value, outgoing),
+                        Node::Neuron(neuron) => neuron.step(&edge.value, outgoing),
+                        _ => unreachable!(),
+                    };
+                    partials[to_layer][to_node] += contribution;
+                    active[to_layer][to_node] = true;
                 }
             }
-            next_layer_inputs.shift_remove(&layer);
         }
     }
 
