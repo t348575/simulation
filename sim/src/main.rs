@@ -38,32 +38,48 @@ fn main() {
 
     let input_nodes = vec![
         Node::Input(Hunger::new(0.0, 0)),
-        Node::Input(Age::new(0, 1)),
-        Node::Input(Health::new(100.0, 2)),
-        Node::Input(Speed::new(0.0, 3)),
-        Node::Input(BlankInput::new(0.0, 4)),  // food_dx
-        Node::Input(BlankInput::new(0.0, 5)),  // food_dy
-        Node::Input(BlankInput::new(1.0, 6)),  // food_distance
-        Node::Input(BlankInput::new(0.0, 7)),  // mate_dx
-        Node::Input(BlankInput::new(0.0, 8)),  // mate_dy
-        Node::Input(BlankInput::new(1.0, 9)),  // mate_distance
-        Node::Input(BlankInput::new(0.0, 10)), // wall_left
-        Node::Input(BlankInput::new(0.0, 11)), // wall_right
-        Node::Input(BlankInput::new(0.0, 12)), // wall_bottom
-        Node::Input(BlankInput::new(0.0, 13)), // wall_top
-        Node::Input(BlankInput::new(0.0, 14)), // poison_dx
-        Node::Input(BlankInput::new(0.0, 15)), // poison_dy
-        Node::Input(BlankInput::new(1.0, 16)), // poison_distance
+        Node::Input(Health::new(100.0, 1)),
+        Node::Input(BlankInput::new(0.0, 2, "prev_thrust")),
+        Node::Input(BlankInput::new(0.0, 3, "prev_turn")),
+        Node::Input(BlankInput::new(1.0, 4, "heading_cos")),
+        Node::Input(BlankInput::new(0.0, 5, "heading_sin")),
+        Node::Input(BlankInput::new(0.0, 6, "touch")),
+        Node::Input(BlankInput::new(0.0, 7, "damage")),
+        Node::Input(BlankInput::new(0.0, 8, "osc")),
+        Node::Input(BlankInput::new(0.0, 9, "mem_in")),
+        Node::Input(Age::new(0, 10)),
+        Node::Input(BlankInput::new(0.0, 11, "size")),
+        Node::Input(BlankInput::new(0.0, 12, "wall_left")),
+        Node::Input(BlankInput::new(0.0, 13, "wall_right")),
+        Node::Input(BlankInput::new(0.0, 14, "wall_btm")),
+        Node::Input(BlankInput::new(0.0, 15, "wall_top")),
+        Node::Input(BlankInput::new(0.0, 16, "food_s0")),
+        Node::Input(BlankInput::new(0.0, 17, "food_s1")),
+        Node::Input(BlankInput::new(0.0, 18, "food_s2")),
+        Node::Input(BlankInput::new(0.0, 19, "food_s3")),
+        Node::Input(BlankInput::new(0.0, 20, "poison_s0")),
+        Node::Input(BlankInput::new(0.0, 21, "poison_s1")),
+        Node::Input(BlankInput::new(0.0, 22, "poison_s2")),
+        Node::Input(BlankInput::new(0.0, 23, "poison_s3")),
+        Node::Input(BlankInput::new(0.0, 24, "obstacle_s0")),
+        Node::Input(BlankInput::new(0.0, 25, "obstacle_s1")),
+        Node::Input(BlankInput::new(0.0, 26, "obstacle_s2")),
+        Node::Input(BlankInput::new(0.0, 27, "obstacle_s3")),
+        Node::Input(BlankInput::new(0.0, 28, "creature_s0")),
+        Node::Input(BlankInput::new(0.0, 29, "creature_s1")),
+        Node::Input(BlankInput::new(0.0, 30, "creature_s2")),
+        Node::Input(BlankInput::new(0.0, 31, "creature_s3")),
     ];
 
     let output_nodes = vec![
-        Node::Output(Sigmoid::new(0.0, 17, "forward".to_string())), // ::<Forward>
-        Node::Output(Sigmoid::new(0.0, 18, "backward".to_string())), // ::<Backward>
-        Node::Output(Sigmoid::new(0.0, 19, "left".to_string())),    // ::<Left>
-        Node::Output(Sigmoid::new(0.0, 20, "right".to_string())),   // ::<Right>
-        Node::Output(Sigmoid::new(0.0, 21, "output_speed".to_string())), // ::<OutputSpeed>
-        Node::Output(Sigmoid::new(0.0, 22, "mate".to_string())),    // ::<Mate>
-        Node::Output(Sigmoid::new(0.0, 23, "eat".to_string())),     // ::<Eat>
+        Node::Output(Sigmoid::new(0.0, 32, "thrust".to_string())),
+        Node::Output(Sigmoid::new(0.0, 33, "turn_left".to_string())),
+        Node::Output(Sigmoid::new(0.0, 34, "turn_right".to_string())),
+        Node::Output(Sigmoid::new(0.0, 35, "speed".to_string())),
+        Node::Output(Sigmoid::new(0.0, 36, "mate".to_string())),
+        Node::Output(Sigmoid::new(0.0, 37, "eat".to_string())),
+        Node::Output(Sigmoid::new(0.0, 38, "attack".to_string())),
+        Node::Output(Sigmoid::new(0.0, 39, "mem_out".to_string())),
     ];
 
     App::new()

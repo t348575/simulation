@@ -1,3 +1,4 @@
+use super::resources::InspectorCamera;
 use bevy::{
     camera::{visibility::RenderLayers, RenderTarget},
     ecs::schedule::ScheduleLabel,
@@ -9,8 +10,10 @@ use bevy_egui::{
     EguiContext, EguiMultipassSchedule,
 };
 use bevy_vector_shapes::prelude::*;
-use engine::{nn::{GraphLocation, Net, Node}, NeuronInfo};
-use super::resources::InspectorCamera;
+use engine::{
+    nn::{GraphLocation, Net, Node},
+    NeuronInfo,
+};
 
 use super::resources::*;
 
@@ -77,7 +80,11 @@ pub fn get_inspect_net(
     circles: Query<Entity, (With<DiscComponent>, With<InspectWindow>)>,
     lines: Query<Entity, (With<LineComponent>, With<InspectWindow>)>,
 ) {
-    let w = window.single().unwrap();
+    let Ok(w) = window.single() else {
+        // Inspect window has been closed — drain pending events and skip drawing.
+        for _ in event_reader.read() {}
+        return;
+    };
     let dims = (w.width(), w.height());
     for item in event_reader.read() {
         let nn = draw_neural_net(
@@ -104,7 +111,7 @@ fn y_pos(node: usize) -> f32 {
 
 fn node_color(node: &Node) -> Color {
     match node {
-        Node::Input(_) => Color::from(Srgba::hex("17c3b2").unwrap()),  // teal
+        Node::Input(_) => Color::from(Srgba::hex("17c3b2").unwrap()), // teal
         Node::Output(_) => Color::from(Srgba::hex("fe6d73").unwrap()), // coral
         Node::Neuron(_) => Color::from(Srgba::hex("c77dff").unwrap()), // purple
         Node::None => Color::from(Srgba::hex("888888").unwrap()),
@@ -113,15 +120,25 @@ fn node_color(node: &Node) -> Color {
 
 fn edge_color_and_thickness(weight: f32) -> (Color, f32) {
     let magnitude = weight.abs().min(3.0) / 3.0; // 0..1
-    let thickness = 1.0 + magnitude * 5.0;        // 1..6
+    let thickness = 1.0 + magnitude * 5.0; // 1..6
     let color = if weight >= 0.0 {
         // positive: pale blue → vivid blue
         let g = 0.6 - magnitude * 0.4;
-        Color::from(Srgba::new(0.1, g, 0.9 + magnitude * 0.1, 0.4 + magnitude * 0.6))
+        Color::from(Srgba::new(
+            0.1,
+            g,
+            0.9 + magnitude * 0.1,
+            0.4 + magnitude * 0.6,
+        ))
     } else {
         // negative: pale red → vivid red
         let gb = 0.6 - magnitude * 0.5;
-        Color::from(Srgba::new(0.9 + magnitude * 0.1, gb, gb * 0.5, 0.4 + magnitude * 0.6))
+        Color::from(Srgba::new(
+            0.9 + magnitude * 0.1,
+            gb,
+            gb * 0.5,
+            0.4 + magnitude * 0.6,
+        ))
     };
     (color, thickness)
 }
@@ -145,12 +162,19 @@ pub fn draw_neural_net(
     let mut nodes = Vec::new();
 
     // Precompute layer positions
-    let layer_positions: Vec<(f32, f32, usize)> = net.graph.layers.iter().enumerate().map(|(num, layer)| {
-        let count = layer.len();
-        let start_x = (-1.0 * dims.0 / 3.0) + ((CIRCLE_RADIUS * 2.0) + SPACING) * num as f32;
-        let start_y = -1.0 * (((CIRCLE_RADIUS * 2.0 * count as f32) + (SPACING * (count as f32 - 1.0))) / 2.0);
-        (start_x, start_y, count)
-    }).collect();
+    let layer_positions: Vec<(f32, f32, usize)> = net
+        .graph
+        .layers
+        .iter()
+        .enumerate()
+        .map(|(num, layer)| {
+            let count = layer.len();
+            let start_x = (-1.0 * dims.0 / 3.0) + ((CIRCLE_RADIUS * 2.0) + SPACING) * num as f32;
+            let start_y = -1.0
+                * (((CIRCLE_RADIUS * 2.0 * count as f32) + (SPACING * (count as f32 - 1.0))) / 2.0);
+            (start_x, start_y, count)
+        })
+        .collect();
 
     // Pass 1: edges (drawn at Z=-1, behind nodes)
     for (num, layer) in net.graph.layers.iter().enumerate() {
@@ -193,7 +217,10 @@ pub fn draw_neural_net(
             let wx = start_x + x_pos(num);
             let wy = start_y + y_pos(node_num);
             nodes.push((
-                GraphLocation { layer: num as u16, node: node_num as u16 },
+                GraphLocation {
+                    layer: num as u16,
+                    node: node_num as u16,
+                },
                 NodePosition { x: wx, y: wy },
             ));
             shapes.color = node_color(&node.value);
@@ -206,7 +233,10 @@ pub fn draw_neural_net(
         }
     }
 
-    Nn { net, node_positions: nodes }
+    Nn {
+        net,
+        node_positions: nodes,
+    }
 }
 
 pub fn draw_node_labels(
@@ -405,24 +435,38 @@ pub fn inspect_window(
         let node = &inspect_info.0 .1;
         match &node.value {
             Node::Input(n) => {
-                ui.colored_label(egui::Color32::from_rgb(0x17, 0xc3, 0xb2), format!("Input: {}", n.label()));
+                ui.colored_label(
+                    egui::Color32::from_rgb(0x17, 0xc3, 0xb2),
+                    format!("Input: {}", n.label()),
+                );
                 ui.label(format!("Value: {:.4}", n.as_standard()));
             }
             Node::Output(n) => {
-                ui.colored_label(egui::Color32::from_rgb(0xfe, 0x6d, 0x73), format!("Output: {}", n.label()));
+                ui.colored_label(
+                    egui::Color32::from_rgb(0xfe, 0x6d, 0x73),
+                    format!("Output: {}", n.label()),
+                );
                 ui.label(format!("Activation: {:.4}", n.value()));
             }
             Node::Neuron(n) => {
-                ui.colored_label(egui::Color32::from_rgb(0xc7, 0x7d, 0xff), format!("Neuron: {}", n.label()));
+                ui.colored_label(
+                    egui::Color32::from_rgb(0xc7, 0x7d, 0xff),
+                    format!("Neuron: {}", n.label()),
+                );
             }
-            Node::None => { ui.label("None"); }
+            Node::None => {
+                ui.label("None");
+            }
         }
 
         ui.separator();
         ui.label(format!("Connections: {}", node.connections.len()));
         for c in &node.connections {
             let status = if c.value.enabled { "✓" } else { "✗" };
-            ui.label(format!("  {} → [{},{}]  w={:.3}", status, c.to.layer, c.to.node, c.value.weight));
+            ui.label(format!(
+                "  {} → [{},{}]  w={:.3}",
+                status, c.to.layer, c.to.node, c.value.weight
+            ));
         }
     })
     .unwrap();

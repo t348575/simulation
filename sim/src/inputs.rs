@@ -97,10 +97,23 @@ impl Speed {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
+#[derive(Debug, Serialize, Deserialize, Clone, SubTraits)]
 pub struct BlankInput {
     value: f32,
     id: usize,
+    name: String,
+}
+
+impl NeuronInfo for BlankInput {
+    fn _type(&self) -> &'static str {
+        "BlankInput"
+    }
+    fn id(&self) -> usize {
+        self.id
+    }
+    fn label(&self) -> &str {
+        &self.name
+    }
 }
 
 #[typetag::serde]
@@ -115,8 +128,12 @@ impl InputNeuron for BlankInput {
 }
 
 impl BlankInput {
-    pub fn new(value: f32, id: usize) -> Box<dyn InputNeuron> {
-        Box::new(Self { value, id })
+    pub fn new(value: f32, id: usize, name: &str) -> Box<dyn InputNeuron> {
+        Box::new(Self {
+            value,
+            id,
+            name: name.to_string(),
+        })
     }
 }
 

@@ -69,7 +69,10 @@ mod test {
             enabled: true,
         };
         let result = s.step(&edge, 2.0);
-        assert!((result - 6.0).abs() < 1e-6, "step should return weight * input = 6.0, got {result}");
+        assert!(
+            (result - 6.0).abs() < 1e-6,
+            "step should return weight * input = 6.0, got {result}"
+        );
     }
 
     #[test]
@@ -87,7 +90,10 @@ mod test {
         // sigmoid(0) = 0.5
         let mut s = make_sigmoid(0.0);
         let result = s.finish_and_save(0.0);
-        assert!((result - 0.5).abs() < 1e-6, "sigmoid(0) should be 0.5, got {result}");
+        assert!(
+            (result - 0.5).abs() < 1e-6,
+            "sigmoid(0) should be 0.5, got {result}"
+        );
     }
 
     #[test]
@@ -107,9 +113,15 @@ mod test {
         // sigmoid(-2.0) < 0.5
         let mut s = make_sigmoid(0.0);
         let result = s.finish_and_save(-2.0);
-        assert!(result < 0.5, "sigmoid of negative input should be < 0.5, got {result}");
+        assert!(
+            result < 0.5,
+            "sigmoid of negative input should be < 0.5, got {result}"
+        );
         let expected = 1.0 / (1.0 + E.powf(2.0));
-        assert!((result - expected).abs() < 1e-6, "Expected {expected}, got {result}");
+        assert!(
+            (result - expected).abs() < 1e-6,
+            "Expected {expected}, got {result}"
+        );
     }
 
     #[test]

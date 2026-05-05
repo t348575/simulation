@@ -260,7 +260,11 @@ mod test {
     fn default_iterator_sequences_indices_and_signals_done_at_last() {
         use super::{DefaultIterator, Generator};
 
-        let reproducers = vec![Crossover::default(), Crossover::default(), Crossover::default()];
+        let reproducers = vec![
+            Crossover::default(),
+            Crossover::default(),
+            Crossover::default(),
+        ];
         let a = Net::default();
         let b = Net::default();
 
@@ -290,6 +294,9 @@ mod test {
         let mut iter = DefaultIterator::new();
         let (idx, done) = iter.generate(&a.graph, &b.graph, &reproducers).unwrap();
         assert_eq!(idx, 0);
-        assert!(done, "With a single reproducer the very first call should be done");
+        assert!(
+            done,
+            "With a single reproducer the very first call should be done"
+        );
     }
 }

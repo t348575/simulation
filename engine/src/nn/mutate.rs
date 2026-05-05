@@ -264,11 +264,21 @@ mod test {
         let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
         let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
         let g = create_graph(&input_nodes, &output_nodes);
-        let mut net = Net { graph: g, input_layer: 0, output_layer: 1 };
+        let mut net = Net {
+            graph: g,
+            input_layer: 0,
+            output_layer: 1,
+        };
 
         let result = RemoveEdge.mutate(&mut net);
-        assert!(result.is_ok(), "RemoveEdge::mutate should not error on an edge-less graph");
-        assert!(!result.unwrap(), "RemoveEdge should return false when there are no edges to remove");
+        assert!(
+            result.is_ok(),
+            "RemoveEdge::mutate should not error on an edge-less graph"
+        );
+        assert!(
+            !result.unwrap(),
+            "RemoveEdge should return false when there are no edges to remove"
+        );
     }
 
     #[test]
@@ -276,14 +286,31 @@ mod test {
         let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
         let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
         let mut g = create_graph(&input_nodes, &output_nodes);
-        g.add_edge(GraphLocation::new(0, 0), GraphLocation::new(1, 0), Edge::default()).unwrap();
-        let mut net = Net { graph: g, input_layer: 0, output_layer: 1 };
+        g.add_edge(
+            GraphLocation::new(0, 0),
+            GraphLocation::new(1, 0),
+            Edge::default(),
+        )
+        .unwrap();
+        let mut net = Net {
+            graph: g,
+            input_layer: 0,
+            output_layer: 1,
+        };
 
-        assert_eq!(net.graph.layers[0][0].connections.len(), 1, "Should start with 1 edge");
+        assert_eq!(
+            net.graph.layers[0][0].connections.len(),
+            1,
+            "Should start with 1 edge"
+        );
         let result = RemoveEdge.mutate(&mut net);
         assert!(result.is_ok());
         // After removal the edge count should drop to 0
-        assert_eq!(net.graph.layers[0][0].connections.len(), 0, "Edge should be removed after mutation");
+        assert_eq!(
+            net.graph.layers[0][0].connections.len(),
+            0,
+            "Edge should be removed after mutation"
+        );
     }
 
     #[test]
@@ -292,11 +319,21 @@ mod test {
         let input_nodes = [Node::Input(Box::new(BlankInput::new(0.0, 0)))];
         let output_nodes = [Node::Output(Sigmoid::new(0.0, 1, "a".to_owned()))];
         let g = create_graph(&input_nodes, &output_nodes);
-        let mut net = Net { graph: g, input_layer: 0, output_layer: 1 };
+        let mut net = Net {
+            graph: g,
+            input_layer: 0,
+            output_layer: 1,
+        };
 
         let result = RemoveNeuron.mutate(&mut net, &[], &|_| 0);
-        assert!(result.is_ok(), "RemoveNeuron should not error on a 2-layer graph");
-        assert!(!result.unwrap(), "RemoveNeuron should return false when no hidden neurons exist");
+        assert!(
+            result.is_ok(),
+            "RemoveNeuron should not error on a 2-layer graph"
+        );
+        assert!(
+            !result.unwrap(),
+            "RemoveNeuron should return false when no hidden neurons exist"
+        );
     }
 
     #[test]
@@ -307,15 +344,33 @@ mod test {
 
         // Insert a hidden layer with one neuron
         g.add_layer(1);
-        g.add_node(1, GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: 0.0, id: 1 })))).unwrap();
+        g.add_node(
+            1,
+            GraphNode::new(Node::Neuron(Box::new(BasicNeuron { bias: 0.0, id: 1 }))),
+        )
+        .unwrap();
 
-        let mut net = Net { graph: g, input_layer: 0, output_layer: 2 };
-        assert_eq!(net.graph.layers[1].len(), 1, "Should start with 1 hidden neuron");
+        let mut net = Net {
+            graph: g,
+            input_layer: 0,
+            output_layer: 2,
+        };
+        assert_eq!(
+            net.graph.layers[1].len(),
+            1,
+            "Should start with 1 hidden neuron"
+        );
 
         let result = RemoveNeuron.mutate(&mut net, &[], &|_| 0);
         assert!(result.is_ok());
-        assert!(result.unwrap(), "RemoveNeuron should return true when a hidden neuron was removed");
-        assert_eq!(net.graph.layers[1].len(), 0, "Hidden neuron should be gone after mutation");
+        assert!(
+            result.unwrap(),
+            "RemoveNeuron should return true when a hidden neuron was removed"
+        );
+        assert_eq!(
+            net.graph.layers[1].len(),
+            0,
+            "Hidden neuron should be gone after mutation"
+        );
     }
-
 }
