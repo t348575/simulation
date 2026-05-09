@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::{RngExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -63,8 +63,8 @@ impl Reproducer for Crossover {
         for item in common_elements.clone() {
             match item {
                 util::AlignedItem::Node(a_node, b_node) => {
-                    let mut rng = rand::thread_rng();
-                    let (g, loc) = if rng.gen::<f32>() < 0.5 {
+                    let mut rng = rand::rng();
+                    let (g, loc) = if rng.random::<f32>() < 0.5 {
                         node_replacements.push(NodeReplacement {
                             from: b_node.clone(),
                             to: a_node.clone(),
@@ -89,12 +89,12 @@ impl Reproducer for Crossover {
         for item in common_elements {
             match item {
                 util::AlignedItem::Edge { data, _type } => {
-                    let mut rng = rand::thread_rng();
+                    let mut rng = rand::rng();
 
                     let mut choose_graph = |a_conn: ConnectionInfo,
                                             b_conn: ConnectionInfo|
                      -> (ConnectionInfo, &NeuralGraph) {
-                        if rng.gen::<f32>() < 0.5 {
+                        if rng.random::<f32>() < 0.5 {
                             (a_conn, &a.graph)
                         } else {
                             (b_conn, &b.graph)
@@ -253,7 +253,11 @@ mod test {
 
         // std::fs::write("reproduce.bin", wincode::serialize(&sim).unwrap()).unwrap();
 
-        assert_eq!(bincode::serialize(&compose_output).unwrap(), bincode::serialize(&output.graph).unwrap());
+        let cfg = bincode::config::standard();
+        assert_eq!(
+            bincode::serde::encode_to_vec(&compose_output, cfg).unwrap(),
+            bincode::serde::encode_to_vec(&output.graph, cfg).unwrap()
+        );
     }
 
     #[test]

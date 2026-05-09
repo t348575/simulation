@@ -8,9 +8,13 @@ use inputs::*;
 use net::{resources::InspectNet, NeuralNetPlugin};
 use sim::SimulationPlugin;
 
-pub mod inputs;
+// Re-export lib's `inputs` so the typetag registrations live in a single
+// crate. If we declared `mod inputs;` here, inputs.rs would be compiled twice
+// (once in lib, once in bin) and typetag would see duplicate "Hunger" tags.
+mod inputs {
+    pub use ::sim::inputs::*;
+}
 mod net;
-pub mod outputs;
 mod sim;
 
 #[derive(Resource, Debug)]
@@ -69,17 +73,39 @@ fn main() {
         Node::Input(BlankInput::new(0.0, 29, "creature_s1")),
         Node::Input(BlankInput::new(0.0, 30, "creature_s2")),
         Node::Input(BlankInput::new(0.0, 31, "creature_s3")),
+        Node::Input(BlankInput::new(0.0, 32, "terrain_elevation")),
+        Node::Input(BlankInput::new(1.0, 33, "terrain_speed")),
+        Node::Input(BlankInput::new(0.0, 34, "terrain_cost")),
+        Node::Input(BlankInput::new(0.0, 35, "terrain_hazard")),
+        Node::Input(BlankInput::new(0.0, 36, "food_odor")),
+        Node::Input(BlankInput::new(0.0, 37, "food_color")),
+        Node::Input(BlankInput::new(0.0, 38, "poison_odor")),
+        Node::Input(BlankInput::new(0.0, 39, "poison_color")),
+        Node::Input(BlankInput::new(0.0, 40, "terrain_cost_s0")),
+        Node::Input(BlankInput::new(0.0, 41, "terrain_cost_s1")),
+        Node::Input(BlankInput::new(0.0, 42, "terrain_cost_s2")),
+        Node::Input(BlankInput::new(0.0, 43, "terrain_cost_s3")),
+        Node::Input(BlankInput::new(0.0, 44, "terrain_haz_s0")),
+        Node::Input(BlankInput::new(0.0, 45, "terrain_haz_s1")),
+        Node::Input(BlankInput::new(0.0, 46, "terrain_haz_s2")),
+        Node::Input(BlankInput::new(0.0, 47, "terrain_haz_s3")),
+        Node::Input(BlankInput::new(0.0, 48, "signal_s0")),
+        Node::Input(BlankInput::new(0.0, 49, "signal_s1")),
+        Node::Input(BlankInput::new(0.0, 50, "signal_s2")),
+        Node::Input(BlankInput::new(0.0, 51, "signal_s3")),
     ];
 
     let output_nodes = vec![
-        Node::Output(Sigmoid::new(0.0, 32, "thrust".to_string())),
-        Node::Output(Sigmoid::new(0.0, 33, "turn_left".to_string())),
-        Node::Output(Sigmoid::new(0.0, 34, "turn_right".to_string())),
-        Node::Output(Sigmoid::new(0.0, 35, "speed".to_string())),
-        Node::Output(Sigmoid::new(0.0, 36, "mate".to_string())),
-        Node::Output(Sigmoid::new(0.0, 37, "eat".to_string())),
-        Node::Output(Sigmoid::new(0.0, 38, "attack".to_string())),
-        Node::Output(Sigmoid::new(0.0, 39, "mem_out".to_string())),
+        Node::Output(Sigmoid::new(0.0, 52, "thrust".to_string())),
+        Node::Output(Sigmoid::new(0.0, 53, "turn_left".to_string())),
+        Node::Output(Sigmoid::new(0.0, 54, "turn_right".to_string())),
+        Node::Output(Sigmoid::new(0.0, 55, "speed".to_string())),
+        Node::Output(Sigmoid::new(0.0, 56, "mate".to_string())),
+        Node::Output(Sigmoid::new(0.0, 57, "eat".to_string())),
+        Node::Output(Sigmoid::new(0.0, 58, "attack".to_string())),
+        Node::Output(Sigmoid::new(0.0, 59, "mem_out".to_string())),
+        Node::Output(Sigmoid::new(0.0, 60, "speak".to_string())),
+        Node::Output(Sigmoid::new(0.0, 61, "voice".to_string())),
     ];
 
     App::new()

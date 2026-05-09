@@ -2,6 +2,7 @@ use super::resources::InspectorCamera;
 use bevy::{
     camera::{visibility::RenderLayers, RenderTarget},
     ecs::schedule::ScheduleLabel,
+    input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
     prelude::*,
     window::{WindowClosed, WindowRef},
 };
@@ -19,6 +20,8 @@ use super::resources::*;
 
 const CIRCLE_RADIUS: f32 = 20.0;
 const SPACING: f32 = 10.0;
+const INSPECTOR_ZOOM_MIN: f32 = 0.05;
+const INSPECTOR_ZOOM_MAX: f32 = 20.0;
 
 #[derive(Component)]
 pub struct InspectWindow;
@@ -73,7 +76,6 @@ pub fn on_inspector_closed(
 }
 
 pub fn get_inspect_net(
-    mut shapes: ShapeCommands,
     mut commands: Commands,
     mut event_reader: MessageReader<InspectNet>,
     window: Query<&Window, With<InspectWindow>>,
@@ -87,14 +89,7 @@ pub fn get_inspect_net(
     };
     let dims = (w.width(), w.height());
     for item in event_reader.read() {
-        let nn = draw_neural_net(
-            item.0.clone(),
-            &circles,
-            &lines,
-            dims,
-            &mut commands,
-            &mut shapes,
-        );
+        let nn = draw_neural_net(item.0.clone(), &circles, &lines, dims, &mut commands);
 
         commands.insert_resource(nn);
         break;
@@ -149,7 +144,6 @@ pub fn draw_neural_net(
     lines: &Query<Entity, (With<LineComponent>, With<InspectWindow>)>,
     dims: (f32, f32),
     commands: &mut Commands,
-    shapes: &mut ShapeCommands,
 ) -> Nn {
     for item in circles.iter() {
         commands.entity(item).despawn();
@@ -160,6 +154,7 @@ pub fn draw_neural_net(
 
     let render_layer = RenderLayers::layer(1);
     let mut nodes = Vec::new();
+    let mut config = ShapeConfig::default_2d();
 
     // Precompute layer positions
     let layer_positions: Vec<(f32, f32, usize)> = net
@@ -194,14 +189,15 @@ pub fn draw_neural_net(
                 );
                 if c.value.enabled {
                     let (color, thickness) = edge_color_and_thickness(c.value.weight);
-                    shapes.color = color;
-                    shapes.thickness = thickness;
+                    config.color = color;
+                    config.thickness = thickness;
                 } else {
-                    shapes.color = Color::from(Srgba::new(0.5, 0.5, 0.5, 0.3));
-                    shapes.thickness = 0.5;
+                    config.color = Color::from(Srgba::new(0.5, 0.5, 0.5, 0.3));
+                    config.thickness = 0.5;
                 }
+                config.transform = Transform::IDENTITY;
                 commands.spawn((
-                    ShapeBundle::line(shapes.config(), from, to),
+                    ShapeBundle::line(&config, from, to),
                     InspectWindow,
                     render_layer.clone(),
                 ));
@@ -210,7 +206,8 @@ pub fn draw_neural_net(
     }
 
     // Pass 2: nodes (at Z=0, in front of edges)
-    shapes.thickness = 0.0;
+    config.hollow = false;
+    config.thickness = 0.1;
     for (num, layer) in net.graph.layers.iter().enumerate() {
         let (start_x, start_y, _) = layer_positions[num];
         for (node_num, node) in layer.iter().enumerate() {
@@ -223,10 +220,10 @@ pub fn draw_neural_net(
                 },
                 NodePosition { x: wx, y: wy },
             ));
-            shapes.color = node_color(&node.value);
-            shapes.transform = Transform::from_xyz(wx, wy, 0.0);
+            config.color = node_color(&node.value);
+            config.transform = Transform::from_xyz(wx, wy, 0.0);
             commands.spawn((
-                ShapeBundle::circle(shapes.config(), CIRCLE_RADIUS),
+                ShapeBundle::circle(&config, CIRCLE_RADIUS),
                 InspectWindow,
                 render_layer.clone(),
             ));
@@ -243,18 +240,26 @@ pub fn draw_node_labels(
     mut egui_ctx: Single<&mut EguiContext, With<InspectorCamera>>,
     nn: Res<Nn>,
     window: Query<&Window, With<InspectWindow>>,
+    camera: Query<&Transform, With<InspectorCamera>>,
 ) {
     let Ok(w) = window.single() else { return };
     let dims = (w.width(), w.height());
+    let cam = camera.single().ok();
     let ctx = egui_ctx.get_mut();
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         egui::Id::new("nn_labels"),
     ));
 
+    let scale = cam.map(|t| t.scale.x.max(1e-6)).unwrap_or(1.0);
+    let cam_x = cam.map(|t| t.translation.x).unwrap_or(0.0);
+    let cam_y = cam.map(|t| t.translation.y).unwrap_or(0.0);
+
     for (loc, pos) in &nn.node_positions {
-        let screen_x = pos.x + dims.0 / 2.0;
-        let screen_y = dims.1 / 2.0 - pos.y;
+        // World → window via inverse of Camera2d transform (Camera2d uses scale
+        // as units-per-pixel for orthographic projection).
+        let screen_x = (pos.x - cam_x) / scale + dims.0 / 2.0;
+        let screen_y = dims.1 / 2.0 - (pos.y - cam_y) / scale;
 
         let node = nn.net.graph.get_node(loc);
         let label = match &node {
@@ -269,14 +274,63 @@ pub fn draw_node_labels(
             Node::None => egui::Color32::GRAY,
         };
 
+        let radius_px = CIRCLE_RADIUS / scale;
         painter.text(
-            egui::pos2(screen_x, screen_y - CIRCLE_RADIUS - 3.0),
+            egui::pos2(screen_x, screen_y - radius_px - 3.0),
             egui::Align2::CENTER_BOTTOM,
             &label,
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional((11.0 / scale).clamp(8.0, 22.0)),
             color,
         );
     }
+}
+
+pub fn inspector_camera_controls(
+    mut camera: Query<&mut Transform, With<InspectorCamera>>,
+    scroll: Res<AccumulatedMouseScroll>,
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    inspector_window: Query<&Window, With<InspectWindow>>,
+) {
+    let Ok(mut transform) = camera.single_mut() else {
+        return;
+    };
+    let focused = inspector_window
+        .single()
+        .map(|w| w.focused)
+        .unwrap_or(false);
+    if !focused {
+        return;
+    }
+
+    let mut zoom = transform.scale.x;
+
+    // Scroll wheel zooms.
+    if scroll.delta.y != 0.0 {
+        let factor = if scroll.delta.y > 0.0 {
+            0.85
+        } else {
+            1.0 / 0.85
+        };
+        zoom *= factor;
+    }
+
+    // Middle-mouse or right-mouse drag pans (mouse_motion is in screen pixels;
+    // multiply by zoom because translation is in world units).
+    if mouse_button.pressed(MouseButton::Middle) || mouse_button.pressed(MouseButton::Right) {
+        transform.translation.x -= mouse_motion.delta.x * zoom;
+        transform.translation.y += mouse_motion.delta.y * zoom;
+    }
+
+    // R resets view.
+    if keyboard.just_pressed(KeyCode::KeyR) {
+        zoom = 1.0;
+        transform.translation = Vec3::ZERO;
+    }
+
+    zoom = zoom.clamp(INSPECTOR_ZOOM_MIN, INSPECTOR_ZOOM_MAX);
+    transform.scale = Vec3::splat(zoom);
 }
 
 // pub fn draw_neural_net(
@@ -382,6 +436,7 @@ pub fn draw_node_labels(
 pub fn toggle_inspect_window(
     buttons: Res<ButtonInput<MouseButton>>,
     q_windows: Query<&Window, With<InspectWindow>>,
+    camera: Query<&Transform, With<InspectorCamera>>,
     data: Res<Nn>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut next_iw_state: ResMut<NextState<InspectNodeState>>,
@@ -395,12 +450,18 @@ pub fn toggle_inspect_window(
     if buttons.just_pressed(MouseButton::Left) {
         let w = q_windows.single().unwrap();
         if let Some(position) = w.cursor_position() {
-            let x = position.x - w.width() / 2.0;
-            let y = (position.y - w.height() / 2.0) * -1.0;
+            let cam = camera.single().ok();
+            let scale = cam.map(|t| t.scale.x.max(1e-6)).unwrap_or(1.0);
+            let cam_x = cam.map(|t| t.translation.x).unwrap_or(0.0);
+            let cam_y = cam.map(|t| t.translation.y).unwrap_or(0.0);
+            // Window cursor → world (Y inverted; Camera2d translation/scale).
+            let x = (position.x - w.width() / 2.0) * scale + cam_x;
+            let y = (w.height() / 2.0 - position.y) * scale + cam_y;
 
+            let hit_radius2 = (CIRCLE_RADIUS).powi(2);
             for node in &data.node_positions {
                 let pos = (x - node.1.x).powi(2) + (y - node.1.y).powi(2);
-                if pos <= CIRCLE_RADIUS.powi(2) {
+                if pos <= hit_radius2 {
                     inspect_info.0 .0 = node.0.clone();
                     inspect_info.0 .1 = data.net.graph.get_node(&node.0).unwrap().clone();
                     next_iw_state.set(InspectNodeState::Display);

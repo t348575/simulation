@@ -4,7 +4,7 @@ use dyn_clone::{clone_trait_object, DynClone};
 use hashbrown::HashSet;
 use log::debug;
 use macros::{DNeuronInfo, SubTraits};
-use rand::{random, seq::IteratorRandom, Rng};
+use rand::{random, seq::IteratorRandom, RngExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -41,6 +41,15 @@ impl NeuronInfo for Node {
             Node::Input(n) => n.id(),
             Node::Output(n) => n.id(),
             Node::Neuron(n) => n.id(),
+        }
+    }
+
+    fn label(&self) -> &str {
+        match self {
+            Node::None => "",
+            Node::Input(n) => n.label(),
+            Node::Output(n) => n.label(),
+            Node::Neuron(n) => n.label(),
         }
     }
 }
@@ -83,6 +92,10 @@ clone_trait_object!(Neuron);
 pub trait Neuron: NeuronSubTraits {
     fn step(&self, edge: &Edge, input: f32) -> f32;
     fn finish(&self, partial: f32) -> f32;
+    fn bias(&self) -> f32 {
+        0.0
+    }
+    fn set_bias(&mut self, _bias: f32) {}
 }
 
 pub type GraphSize = u16;
@@ -248,9 +261,24 @@ impl NeuralGraph {
         self.layers[remove.layer as usize].remove(remove.node as usize);
 
         self.layers.iter_mut().for_each(|layer| {
-            layer
-                .iter_mut()
-                .for_each(|node| node.connections.retain(|c| c.to.ne(&remove)))
+            layer.iter_mut().for_each(|node| {
+                node.connections = node
+                    .connections
+                    .drain(..)
+                    .filter_map(|mut c| {
+                        if c.to.layer != remove.layer {
+                            return Some(c);
+                        }
+                        if c.to.node == remove.node {
+                            return None;
+                        }
+                        if c.to.node > remove.node {
+                            c.to.node -= 1;
+                        }
+                        Some(c)
+                    })
+                    .collect();
+            })
         })
     }
 
@@ -357,8 +385,8 @@ impl NeuralGraph {
         }
 
         let subtract_from_end = subtract_from_end.unwrap_or_default();
-        let mut rng = rand::thread_rng();
-        let layer_idx = rng.gen_range(from as usize..self.layers.len() - subtract_from_end);
+        let mut rng = rand::rng();
+        let layer_idx = rng.random_range(from as usize..self.layers.len() - subtract_from_end);
         let layer = &self.layers[layer_idx];
 
         if layer.len() == 0 {
@@ -366,7 +394,7 @@ impl NeuralGraph {
         }
         Some(GraphLocation::new(
             layer_idx as GraphSize,
-            rng.gen_range(0..layer.len()) as GraphSize,
+            rng.random_range(0..layer.len()) as GraphSize,
         ))
     }
 
@@ -400,7 +428,7 @@ impl NeuralGraph {
                         )
                     })
             })
-            .choose_stable(&mut rand::thread_rng())
+            .choose_stable(&mut rand::rng())
     }
 
     pub fn has_cycle(&self, start_from: Option<GraphLocation>) -> bool {
@@ -450,6 +478,20 @@ impl Neuron for BasicNeuron {
     fn finish(&self, partial: f32) -> f32 {
         partial + self.bias
     }
+
+    fn bias(&self) -> f32 {
+        self.bias
+    }
+
+    fn set_bias(&mut self, bias: f32) {
+        self.bias = bias;
+    }
+}
+
+impl BasicNeuron {
+    pub fn new(bias: f32, id: usize) -> Self {
+        Self { bias, id }
+    }
 }
 
 impl Net {
@@ -471,24 +513,25 @@ impl Net {
     }
 
     pub fn gen(input_nodes: &[Node], output_nodes: &[Node]) -> Result<Net, NeuralGraphError> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut g = NeuralGraph::new();
         let input_layer = g.add_layer_to_end();
         for value in input_nodes {
             g.add_node(input_layer, GraphNode::new(value.clone()))?;
         }
 
-        // Always generate at least 1 hidden layer with meaningful node counts.
-        let num_hidden_layers = rng.gen_range(1..=6usize);
+        // Start lean: prefer wide input→output connectivity over deep hidden stacks.
+        // Mutation will grow hidden structure once inputs are well-covered.
+        let num_hidden_layers = rng.random_range(0..=2usize);
         let mut id = 0;
         for _ in 0..num_hidden_layers {
-            let num_nodes = rng.gen_range(2..=14usize);
+            let num_nodes = rng.random_range(2..=5usize);
             let l = g.add_layer_to_end();
             for _ in 0..num_nodes {
                 g.add_node(
                     l,
                     GraphNode::new(Node::Neuron(Box::new(BasicNeuron {
-                        bias: rng.gen_range(-1.0..1.0),
+                        bias: rng.random_range(-1.0..1.0),
                         id,
                     }))),
                 )?;
@@ -502,17 +545,46 @@ impl Net {
             g.add_node(output_layer, GraphNode::new(value.clone()))?;
         }
 
-        // More connections, better weight range, and mostly-enabled edges.
         let total_layers = (num_hidden_layers + 2) as GraphSize;
-        let num_connections =
-            rng.gen_range((4 * (num_hidden_layers + 1))..(12 * (num_hidden_layers + 1)));
-        let mut actual_connections = 0;
         let mut connection_pairs = Vec::new();
+
+        // Wire every input to a random forward node first — broad input coverage
+        // is the priority over depth.
+        let input_count = g.layers[input_layer as usize].len();
+        for from_node in 0..input_count {
+            let to_layer: GraphSize = rng.random_range(1..total_layers);
+            let to_len = g.layers[to_layer as usize].len();
+            if to_len == 0 {
+                continue;
+            }
+            let to_node = rng.random_range(0..to_len) as GraphSize;
+            let from = GraphLocation {
+                layer: input_layer,
+                node: from_node as GraphSize,
+            };
+            let to = GraphLocation {
+                layer: to_layer,
+                node: to_node,
+            };
+            connection_pairs.push((from.clone(), to.clone()));
+            g.add_edge(
+                from,
+                to,
+                Edge {
+                    weight: rng.random_range(-3.0..3.0),
+                    enabled: true,
+                },
+            )?;
+        }
+
+        // A few extra random feed-forward connections (mostly between hidden/output).
+        let num_connections = rng.random_range(2..=(2 * (num_hidden_layers + 1) + 2));
+        let mut actual_connections = 0;
         let mut attempts = 0;
         while actual_connections < num_connections && attempts < num_connections * 10 {
             attempts += 1;
-            let from_layer: GraphSize = rng.gen_range(0..total_layers - 1);
-            let to_layer: GraphSize = rng.gen_range(from_layer + 1..total_layers);
+            let from_layer: GraphSize = rng.random_range(0..total_layers - 1);
+            let to_layer: GraphSize = rng.random_range(from_layer + 1..total_layers);
 
             let from_len = g.layers[from_layer as usize].len();
             let to_len = g.layers[to_layer as usize].len();
@@ -520,8 +592,8 @@ impl Net {
                 continue;
             }
 
-            let from_node = rng.gen_range(0..from_len) as GraphSize;
-            let to_node = rng.gen_range(0..to_len) as GraphSize;
+            let from_node = rng.random_range(0..from_len) as GraphSize;
+            let to_node = rng.random_range(0..to_len) as GraphSize;
             let from = GraphLocation {
                 layer: from_layer,
                 node: from_node,
@@ -540,8 +612,8 @@ impl Net {
                 from,
                 to,
                 Edge {
-                    weight: rng.gen_range(-3.0..3.0),
-                    enabled: rng.gen_bool(0.85),
+                    weight: rng.random_range(-3.0..3.0),
+                    enabled: rng.random_bool(0.85),
                 },
             )?;
             actual_connections += 1;
@@ -680,7 +752,7 @@ mod test_requirements {
     use macros::{DNeuronInfo, SubTraits};
     use serde::{Deserialize, Serialize};
 
-    use super::{GraphLocation, GraphNode, Net, NeuralGraph, NeuronInfo, NeuronSubTraits, Node};
+    use super::{GraphNode, NeuralGraph, NeuronInfo, NeuronSubTraits, Node};
 
     #[derive(Debug, Serialize, Deserialize, Clone, DNeuronInfo, SubTraits)]
     pub struct BlankInput {
@@ -737,25 +809,6 @@ mod test_requirements {
         pub fn new(value: f32, id: usize) -> Self {
             BlankInput { value, id }
         }
-    }
-
-    #[derive(Debug, Default, Serialize, Deserialize)]
-    pub struct NodePosition {
-        pub x: f32,
-        pub y: f32,
-    }
-
-    #[derive(Debug, Default, Serialize, Deserialize)]
-    pub struct Nn {
-        pub net: Net,
-        pub node_positions: Vec<(GraphLocation, NodePosition)>,
-    }
-
-    #[derive(Debug, Default, Serialize, Deserialize)]
-    pub struct Simulation {
-        pub nets: Vec<Nn>,
-        pub input_nodes: Vec<Node>,
-        pub output_nodes: Vec<Node>,
     }
 
     pub fn create_graph(inputs: &[Node], outputs: &[Node]) -> NeuralGraph {

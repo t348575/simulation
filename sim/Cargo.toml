@@ -14,12 +14,18 @@ serde_json = "1.0"
 macros = { path = "../macros" }
 bevy_egui = "0.39"
 egui_file = { git = "https://github.com/t348575/egui_file", branch = "bevy_egui"}
-wincode = "0.5"
 bincode = { version = "2", features = ["serde"] }
-rand = "0.8"
+rand = "0.10"
 flume = "0.12"
 rayon = "1.9"
 dashmap = { version = "6.1", features = ["rayon", "serde"] }
 bytemuck = { version = "1.21", features = ["derive"] }
 pollster = "0.4"
-wgpu = "27.0.1"
+wgpu = "29.0"
+
+[dev-dependencies]
+criterion = "0.8"
+
+[[bench]]
+name = "gpu_sensors"
+harness = false

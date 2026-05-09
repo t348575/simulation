@@ -112,6 +112,9 @@ impl AddNeuron {
         let mut to_layer_new = link_to_split.to.layer;
         if link_to_split.to.layer == from.layer + 1 {
             net.graph.add_layer(from.layer + 1);
+            if net.output_layer >= from.layer + 1 {
+                net.output_layer += 1;
+            }
             to_layer_new = layer + 1;
         }
 
@@ -255,7 +258,11 @@ mod test {
 
         // std::fs::write("mutate.bin", wincode::serialize(&sim).unwrap()).unwrap();
 
-        assert_eq!(bincode::serialize(&m.graph).unwrap(), bincode::serialize(&v.graph).unwrap());
+        let cfg = bincode::config::standard();
+        assert_eq!(
+            bincode::serde::encode_to_vec(&m.graph, cfg).unwrap(),
+            bincode::serde::encode_to_vec(&v.graph, cfg).unwrap()
+        );
     }
 
     #[test]
